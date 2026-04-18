@@ -1,12 +1,8 @@
-# Struct Parser 默认配置文件
-# 将此文件放在项目根目录或指定路径
+# Struct Parser 配置文件
+# 程序将递归扫描 includePaths 中的所有头文件(.h, .hpp, .hh, .hxx)
 
-# 必需：要解析的头文件路径
-# 可以是相对路径或绝对路径
-headerFile: src/registers.h
-
-# 可选：头文件搜索路径列表
-# GCC 预处理和自定义 #include 都会使用这些路径
+# 必需：头文件搜索路径列表
+# 每个路径将被递归扫描，所有子目录中的头文件都会被解析
 includePaths:
   - ./include
   - ./drivers

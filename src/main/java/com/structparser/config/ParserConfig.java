@@ -1,5 +1,6 @@
 package com.structparser.config;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -9,7 +10,6 @@ import java.util.List;
  * 解析器配置类 - 从 YAML/Properties 文件加载
  */
 public record ParserConfig(
-    String headerFile,
     List<String> includePaths,
     String gccCommand,
     boolean gccRequired,
@@ -19,7 +19,7 @@ public record ParserConfig(
     public ParserConfig {
         includePaths = includePaths != null ? List.copyOf(includePaths) : List.of();
         gccCommand = gccCommand != null ? gccCommand : "gcc";
-        gccRequired = gccRequired; // 强制要求 GCC
+        gccRequired = gccRequired;
         output = output != null ? output : new OutputConfig("json", null);
     }
     
@@ -28,19 +28,11 @@ public record ParserConfig(
      */
     public static ParserConfig defaults() {
         return new ParserConfig(
-            null,
             new ArrayList<>(),
             "gcc",
-            true,  // 默认强制使用 GCC
+            true,
             new OutputConfig("json", null)
         );
-    }
-    
-    /**
-     * 获取头文件路径
-     */
-    public Path getHeaderFilePath() {
-        return headerFile != null ? Paths.get(headerFile) : null;
     }
     
     /**
@@ -56,13 +48,18 @@ public record ParserConfig(
      * 验证配置是否有效
      */
     public void validate() {
-        if (headerFile == null || headerFile.isBlank()) {
-            throw new IllegalStateException("Header file path must be specified in configuration");
+        if (includePaths == null || includePaths.isEmpty()) {
+            throw new IllegalStateException("includePaths must be specified in configuration");
         }
         
-        Path path = getHeaderFilePath();
-        if (!java.nio.file.Files.exists(path)) {
-            throw new IllegalStateException("Header file does not exist: " + headerFile);
+        for (String pathStr : includePaths) {
+            Path path = Paths.get(pathStr);
+            if (!Files.exists(path)) {
+                throw new IllegalStateException("Include path does not exist: " + pathStr);
+            }
+            if (!Files.isDirectory(path)) {
+                throw new IllegalStateException("Include path is not a directory: " + pathStr);
+            }
         }
     }
     

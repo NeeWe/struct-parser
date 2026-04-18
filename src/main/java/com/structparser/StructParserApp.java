@@ -4,17 +4,21 @@ import com.structparser.config.ConfigLoader;
 import com.structparser.config.ParserConfig;
 import com.structparser.generator.JsonGenerator;
 import com.structparser.model.ParseResult;
+import com.structparser.model.Struct;
+import com.structparser.model.Union;
 import com.structparser.parser.GccPreprocessor;
+import com.structparser.parser.HeaderFileScanner;
 import com.structparser.parser.StructParserService;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 应用程序入口 - 强制从配置文件启动，无参数，无默认配置生成
+ * 应用程序入口 - 扫描并解析 includePaths 中的所有头文件
  */
 public class StructParserApp {
     
@@ -48,7 +52,7 @@ public class StructParserApp {
     }
     
     /**
-     * 强制从配置文件解析头文件
+     * 从配置文件扫描并解析所有头文件
      */
     private static void parseWithConfig() {
         // 检查 GCC 是否可用（强制要求）
@@ -72,9 +76,9 @@ public class StructParserApp {
             System.err.println();
             System.err.println("Please create a configuration file with the following content:");
             System.err.println();
-            System.err.println("headerFile: path/to/your/header.h");
             System.err.println("includePaths:");
             System.err.println("  - ./include");
+            System.err.println("  - ./drivers");
             System.err.println("gccCommand: gcc");
             System.err.println("gccRequired: true");
             System.exit(1);
@@ -90,14 +94,39 @@ public class StructParserApp {
             return;
         }
         
-        // 解析头文件
-        parseWithGccPreprocessing(config);
+        // 扫描头文件
+        List<Path> headerFiles;
+        try {
+            headerFiles = HeaderFileScanner.scan(config.getIncludePaths());
+        } catch (IOException e) {
+            System.err.println("Error scanning header files: " + e.getMessage());
+            System.exit(1);
+            return;
+        }
+        
+        if (headerFiles.isEmpty()) {
+            System.err.println("Error: No header files found in include paths:");
+            for (Path path : config.getIncludePaths()) {
+                System.err.println("  - " + path);
+            }
+            System.exit(1);
+            return;
+        }
+        
+        System.err.println("Found " + headerFiles.size() + " header file(s) to parse:");
+        for (Path file : headerFiles) {
+            System.err.println("  - " + file);
+        }
+        System.err.println();
+        
+        // 解析所有头文件
+        parseAllHeaders(config, headerFiles);
     }
     
     /**
-     * 使用 GCC 预处理解析头文件
+     * 解析所有头文件并合并结果
      */
-    private static void parseWithGccPreprocessing(ParserConfig config) {
+    private static void parseAllHeaders(ParserConfig config, List<Path> headerFiles) {
         var service = new StructParserService();
         var generator = new JsonGenerator();
         
@@ -110,40 +139,62 @@ public class StructParserApp {
             service.addSearchPath(path);
         }
         
+        // 合并所有解析结果
+        var allStructs = new ArrayList<Struct>();
+        var allUnions = new ArrayList<Union>();
+        var allErrors = new ArrayList<String>();
+        
+        for (Path headerFile : headerFiles) {
+            System.err.println("Parsing: " + headerFile);
+            
+            try {
+                ParseResult result = service.parseFile(headerFile);
+                
+                allStructs.addAll(result.structs());
+                allUnions.addAll(result.unions());
+                allErrors.addAll(result.errors());
+                
+            } catch (IOException e) {
+                allErrors.add("Error parsing " + headerFile + ": " + e.getMessage());
+            }
+        }
+        
+        // 创建合并的解析结果
+        var mergedResult = new ParseResult(allStructs, allUnions, java.util.Map.of(), allErrors);
+        
+        // 生成输出
+        String json = generator.generate(mergedResult);
+        
+        // 输出结果
         try {
-            Path headerPath = config.getHeaderFilePath();
-            System.err.println("Parsing: " + headerPath);
-            System.err.println("Using GCC: " + config.gccCommand());
-            
-            ParseResult result = service.parseFile(headerPath);
-            String json = generator.generate(result);
-            
-            // 输出结果
             if (config.output() != null && config.output().outputFile() != null) {
                 // 写入文件
                 Path outputPath = Paths.get(config.output().outputFile());
                 Files.createDirectories(outputPath.getParent());
                 Files.writeString(outputPath, json);
-                System.err.println("Output written to: " + outputPath);
+                System.err.println("\nOutput written to: " + outputPath);
             } else {
                 // 输出到标准输出
                 System.out.println(json);
             }
-            
-            // 报告错误
-            if (result.hasErrors()) {
-                System.err.println("\nParsing completed with errors:");
-                for (String error : result.errors()) {
-                    System.err.println("  - " + error);
-                }
-                System.exit(2);
-            } else {
-                System.err.println("Parsing completed successfully.");
-            }
-            
         } catch (IOException e) {
-            System.err.println("Error: " + e.getMessage());
+            System.err.println("Error writing output: " + e.getMessage());
             System.exit(1);
+        }
+        
+        // 报告结果
+        System.err.println("\nParsing completed:");
+        System.err.println("  - Structs: " + allStructs.size());
+        System.err.println("  - Unions: " + allUnions.size());
+        
+        if (!allErrors.isEmpty()) {
+            System.err.println("  - Errors: " + allErrors.size());
+            for (String error : allErrors) {
+                System.err.println("    - " + error);
+            }
+            System.exit(2);
+        } else {
+            System.err.println("  - Status: Success");
         }
     }
     
@@ -175,27 +226,31 @@ public class StructParserApp {
         System.out.println("Struct Parser - C-style struct/union parser with GCC preprocessing");
         System.out.println();
         System.out.println("Usage:");
-        System.out.println("  java -jar struct-parser.jar           Parse using struct-parser.yaml");
+        System.out.println("  java -jar struct-parser.jar           Parse all headers in includePaths");
         System.out.println("  java -jar struct-parser.jar gcc-info  Check GCC availability");
         System.out.println("  java -jar struct-parser.jar help      Show this help message");
         System.out.println();
-        System.out.println("Configuration File:");
-        System.out.println("  Required: struct-parser.yaml (or .yml, .json) in current directory");
+        System.out.println("Configuration File (struct-parser.yaml):");
+        System.out.println("  Required in current directory");
         System.out.println();
-        System.out.println("  Example struct-parser.yaml:");
-        System.out.println("    headerFile: src/registers.h");
+        System.out.println("  Example:");
         System.out.println("    includePaths:");
-        System.out.println("      - ./include");
-        System.out.println("      - ./drivers");
+        System.out.println("      - ./include       # Scanned recursively");
+        System.out.println("      - ./drivers       # Scanned recursively");
         System.out.println("    gccCommand: gcc");
         System.out.println("    gccRequired: true");
         System.out.println("    output:");
         System.out.println("      format: json");
         System.out.println("      outputFile: output.json");
         System.out.println();
+        System.out.println("Features:");
+        System.out.println("  - Recursively scans all .h, .hpp files in includePaths");
+        System.out.println("  - GCC preprocessing is mandatory");
+        System.out.println("  - Merges results from all header files");
+        System.out.println();
         System.out.println("Requirements:");
         System.out.println("  - GCC must be installed and in PATH");
         System.out.println("  - Configuration file must exist");
-        System.out.println("  - Header file path must be specified in configuration");
+        System.out.println("  - At least one include path must be specified");
     }
 }

@@ -5,6 +5,7 @@ import com.structparser.config.ParserConfig;
 import com.structparser.generator.JsonGenerator;
 import com.structparser.model.ParseResult;
 import com.structparser.parser.GccPreprocessor;
+import com.structparser.parser.HeaderFileScanner;
 import com.structparser.parser.StructParserService;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -72,7 +74,7 @@ public class GccIntegrationTest {
             service.addSearchPath(path);
         }
         
-        ParseResult result = service.parseFile(config.getHeaderFilePath());
+        ParseResult result = service.parseFile(getFirstHeaderFile(config));
         
         // 5. 生成 JSON
         var generator = new JsonGenerator();
@@ -125,8 +127,8 @@ public class GccIntegrationTest {
             #endif
             """);
         
-        // 创建配置文件
-        Path configFile = createConfigFile("multi.yaml", headerFile, List.of(includeDir.toString()));
+        // 创建配置文件 - 只扫描主文件所在目录
+        Path configFile = createConfigFile("multi.yaml", headerFile, List.of());
         
         // 执行解析流程
         ParserConfig config = ConfigLoader.load(configFile);
@@ -134,11 +136,10 @@ public class GccIntegrationTest {
             .enableGccPreprocessing()
             .setGccCommand(config.gccCommand());
         
-        for (Path path : config.getIncludePaths()) {
-            service.addSearchPath(path);
-        }
+        // 添加 include 目录作为搜索路径
+        service.addSearchPath(includeDir);
         
-        ParseResult result = service.parseFile(config.getHeaderFilePath());
+        ParseResult result = service.parseFile(headerFile);
         
         // 验证
         assertFalse(result.hasErrors(), "Should not have errors: " + result.errors());
@@ -182,7 +183,7 @@ public class GccIntegrationTest {
             .enableGccPreprocessing()
             .setGccCommand(config.gccCommand());
         
-        ParseResult result = service.parseFile(config.getHeaderFilePath());
+        ParseResult result = service.parseFile(getFirstHeaderFile(config));
         
         assertFalse(result.hasErrors(), "Should not have errors");
         var configReg = result.getStructByName("ConfigReg");
@@ -229,7 +230,7 @@ public class GccIntegrationTest {
             .enableGccPreprocessing()
             .setGccCommand(config.gccCommand());
         
-        ParseResult result = service.parseFile(config.getHeaderFilePath());
+        ParseResult result = service.parseFile(getFirstHeaderFile(config));
         
         assertFalse(result.hasErrors(), "Should not have errors");
         var features = result.getStructByName("Features");
@@ -270,7 +271,7 @@ public class GccIntegrationTest {
             .enableGccPreprocessing()
             .setGccCommand(config.gccCommand());
         
-        ParseResult result = service.parseFile(config.getHeaderFilePath());
+        ParseResult result = service.parseFile(getFirstHeaderFile(config));
         
         assertFalse(result.hasErrors(), "Should not have errors");
         assertEquals(2, result.structs().size(), "Should have 2 structs");
@@ -306,17 +307,23 @@ public class GccIntegrationTest {
     
     @Test
     @Order(7)
-    @DisplayName("错误处理：无效的头文件")
-    void testInvalidHeaderFile() throws IOException {
-        Path configFile = createConfigFile("invalid.yaml", 
-            tempDir.resolve("non_existent.h"), List.of());
+    @DisplayName("错误处理：无效的包含路径")
+    void testInvalidIncludePath() throws IOException {
+        // 创建指向不存在目录的配置
+        Path configFile = tempDir.resolve("invalid.yaml");
+        Files.writeString(configFile, """
+            includePaths:
+              - /non/existent/path
+            gccCommand: gcc
+            gccRequired: true
+            """);
         
         ParserConfig config = ConfigLoader.load(configFile);
         
         IllegalStateException exception = assertThrows(
             IllegalStateException.class,
             config::validate,
-            "Should throw for non-existent header file"
+            "Should throw for non-existent include path"
         );
         
         assertTrue(exception.getMessage().contains("does not exist"));
@@ -342,7 +349,7 @@ public class GccIntegrationTest {
             .enableGccPreprocessing()
             .setGccCommand(config.gccCommand());
         
-        ParseResult result = service.parseFile(config.getHeaderFilePath());
+        ParseResult result = service.parseFile(getFirstHeaderFile(config));
         
         // 应该报告错误
         assertTrue(result.hasErrors(), "Should report errors for missing system header");
@@ -365,20 +372,21 @@ public class GccIntegrationTest {
         // 创建带输出文件路径的配置
         Path configFile = tempDir.resolve("output_config.yaml");
         Files.writeString(configFile, String.format("""
-            headerFile: %s
+            includePaths:
+              - %s
             gccCommand: gcc
             gccRequired: true
             output:
               format: json
               outputFile: %s
-            """, headerFile, outputFile));
+            """, tempDir, outputFile));
         
         ParserConfig config = ConfigLoader.load(configFile);
         var service = new StructParserService()
             .enableGccPreprocessing()
             .setGccCommand(config.gccCommand());
         
-        ParseResult result = service.parseFile(config.getHeaderFilePath());
+        ParseResult result = service.parseFile(getFirstHeaderFile(config));
         
         // 生成并保存输出
         var generator = new JsonGenerator();
@@ -389,6 +397,48 @@ public class GccIntegrationTest {
         assertTrue(Files.exists(outputFile), "Output file should exist");
         String content = Files.readString(outputFile);
         assertTrue(content.contains("OutputTest"), "Output should contain struct name");
+    }
+    
+    /**
+     * 从配置获取所有头文件路径（用于测试）
+     */
+    private List<Path> getHeaderFiles(ParserConfig config) throws IOException {
+        List<Path> headerFiles = HeaderFileScanner.scan(config.getIncludePaths());
+        assertFalse(headerFiles.isEmpty(), "Should find at least one header file");
+        return headerFiles;
+    }
+    
+    /**
+     * 从配置获取第一个头文件路径（用于测试）
+     */
+    private Path getFirstHeaderFile(ParserConfig config) throws IOException {
+        return getHeaderFiles(config).get(0);
+    }
+    
+    /**
+     * 解析所有头文件并合并结果
+     */
+    private ParseResult parseAllHeaders(ParserConfig config) throws IOException {
+        var service = new StructParserService()
+            .enableGccPreprocessing()
+            .setGccCommand(config.gccCommand());
+        
+        for (Path path : config.getIncludePaths()) {
+            service.addSearchPath(path);
+        }
+        
+        var allStructs = new ArrayList<com.structparser.model.Struct>();
+        var allUnions = new ArrayList<com.structparser.model.Union>();
+        var allErrors = new ArrayList<String>();
+        
+        for (Path headerFile : getHeaderFiles(config)) {
+            ParseResult result = service.parseFile(headerFile);
+            allStructs.addAll(result.structs());
+            allUnions.addAll(result.unions());
+            allErrors.addAll(result.errors());
+        }
+        
+        return new ParseResult(allStructs, allUnions, java.util.Map.of(), allErrors);
     }
     
     // ========== 辅助方法 ==========
@@ -402,14 +452,21 @@ public class GccIntegrationTest {
     private Path createConfigFile(String name, Path headerFile, List<String> includePaths) throws IOException {
         Path path = tempDir.resolve(name);
         
+        // 将头文件所在目录作为 includePath
+        List<String> allIncludePaths = new ArrayList<>(includePaths);
+        if (headerFile != null && headerFile.getParent() != null) {
+            allIncludePaths.add(headerFile.getParent().toString().replace("\\", "/"));
+        }
+        
         StringBuilder sb = new StringBuilder();
-        sb.append("headerFile: ").append(headerFile.toString().replace("\\", "/")).append("\n");
         sb.append("gccCommand: gcc\n");
         sb.append("gccRequired: true\n");
         
-        if (!includePaths.isEmpty()) {
-            sb.append("includePaths:\n");
-            for (String inc : includePaths) {
+        sb.append("includePaths:\n");
+        if (allIncludePaths.isEmpty()) {
+            sb.append("  - .\n");
+        } else {
+            for (String inc : allIncludePaths) {
                 sb.append("  - ").append(inc.replace("\\", "/")).append("\n");
             }
         }

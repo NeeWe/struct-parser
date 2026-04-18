@@ -27,7 +27,6 @@ public class ConfigLoaderTest {
     void testLoadYamlConfig() throws IOException {
         Path configFile = tempDir.resolve("test.yaml");
         Files.writeString(configFile, """
-            headerFile: src/test.h
             includePaths:
               - ./include
               - ./drivers
@@ -40,7 +39,6 @@ public class ConfigLoaderTest {
         
         ParserConfig config = ConfigLoader.load(configFile);
         
-        assertEquals("src/test.h", config.headerFile());
         assertEquals(List.of("./include", "./drivers"), config.includePaths());
         assertEquals("gcc", config.gccCommand());
         assertTrue(config.gccRequired());
@@ -54,14 +52,15 @@ public class ConfigLoaderTest {
     void testLoadYmlConfig() throws IOException {
         Path configFile = tempDir.resolve("test.yml");
         Files.writeString(configFile, """
-            headerFile: src/main.h
+            includePaths:
+              - ./src
             gccCommand: arm-none-eabi-gcc
             gccRequired: true
             """);
         
         ParserConfig config = ConfigLoader.load(configFile);
         
-        assertEquals("src/main.h", config.headerFile());
+        assertEquals(List.of("./src"), config.includePaths());
         assertEquals("arm-none-eabi-gcc", config.gccCommand());
         assertTrue(config.gccRequired());
     }
@@ -75,7 +74,6 @@ public class ConfigLoaderTest {
         Path configFile = tempDir.resolve("test.json");
         Files.writeString(configFile, """
             {
-              "headerFile": "src/device.h",
               "includePaths": ["./inc", "./hal"],
               "gccCommand": "gcc",
               "gccRequired": true,
@@ -88,7 +86,6 @@ public class ConfigLoaderTest {
         
         ParserConfig config = ConfigLoader.load(configFile);
         
-        assertEquals("src/device.h", config.headerFile());
         assertEquals(2, config.includePaths().size());
         assertEquals("./inc", config.includePaths().get(0));
     }
@@ -101,7 +98,6 @@ public class ConfigLoaderTest {
     void testConfigDefaults() {
         ParserConfig config = ParserConfig.defaults();
         
-        assertNull(config.headerFile());
         assertTrue(config.includePaths().isEmpty());
         assertEquals("gcc", config.gccCommand());
         assertTrue(config.gccRequired()); // 默认强制使用 GCC
@@ -115,14 +111,14 @@ public class ConfigLoaderTest {
     void testPartialConfigWithDefaults() throws IOException {
         Path configFile = tempDir.resolve("partial.yaml");
         Files.writeString(configFile, """
-            headerFile: src/test.h
+            includePaths:
+              - ./src
             gccRequired: true
             """);
         
         ParserConfig config = ConfigLoader.load(configFile);
         
-        assertEquals("src/test.h", config.headerFile());
-        assertTrue(config.includePaths().isEmpty(), "Include paths should default to empty");
+        assertEquals(List.of("./src"), config.includePaths());
         assertEquals("gcc", config.gccCommand(), "GCC command should default to 'gcc'");
         assertTrue(config.gccRequired(), "GCC required should default to true");
     }
@@ -133,12 +129,11 @@ public class ConfigLoaderTest {
     @Order(30)
     @DisplayName("验证有效配置")
     void testValidateValidConfig() throws IOException {
-        Path headerFile = tempDir.resolve("test.h");
-        Files.createFile(headerFile);
+        Path includeDir = tempDir.resolve("include");
+        Files.createDirectories(includeDir);
         
         ParserConfig config = new ParserConfig(
-            headerFile.toString(),
-            List.of(),
+            List.of(includeDir.toString()),
             "gcc",
             true,
             null
@@ -149,25 +144,24 @@ public class ConfigLoaderTest {
     
     @Test
     @Order(31)
-    @DisplayName("验证缺失头文件路径")
-    void testValidateMissingHeaderFile() {
+    @DisplayName("验证缺失包含路径")
+    void testValidateMissingIncludePaths() {
         ParserConfig config = ParserConfig.defaults();
         
         IllegalStateException exception = assertThrows(
             IllegalStateException.class,
             config::validate,
-            "Should throw for missing header file"
+            "Should throw for missing include paths"
         );
-        assertTrue(exception.getMessage().contains("Header file path"));
+        assertTrue(exception.getMessage().contains("includePaths"));
     }
     
     @Test
     @Order(32)
-    @DisplayName("验证不存在的头文件")
-    void testValidateNonExistentHeaderFile() {
+    @DisplayName("验证不存在的包含路径")
+    void testValidateNonExistentIncludePath() {
         ParserConfig config = new ParserConfig(
-            "/path/that/does/not/exist.h",
-            List.of(),
+            List.of("/path/that/does/not/exist"),
             "gcc",
             true,
             null
@@ -176,7 +170,7 @@ public class ConfigLoaderTest {
         IllegalStateException exception = assertThrows(
             IllegalStateException.class,
             config::validate,
-            "Should throw for non-existent header file"
+            "Should throw for non-existent include path"
         );
         assertTrue(exception.getMessage().contains("does not exist"));
     }
@@ -188,13 +182,14 @@ public class ConfigLoaderTest {
     @DisplayName("自动加载 YAML 配置")
     void testAutoLoadYaml() throws IOException {
         Files.writeString(tempDir.resolve("struct-parser.yaml"), """
-            headerFile: src/auto.yaml
+            includePaths:
+              - ./src
             gccRequired: true
             """);
         
         ParserConfig config = ConfigLoader.autoLoad(tempDir);
         
-        assertEquals("src/auto.yaml", config.headerFile());
+        assertEquals(List.of("./src"), config.includePaths());
     }
     
     @Test
@@ -202,13 +197,14 @@ public class ConfigLoaderTest {
     @DisplayName("自动加载 YML 配置（YAML 不存在时）")
     void testAutoLoadYml() throws IOException {
         Files.writeString(tempDir.resolve("struct-parser.yml"), """
-            headerFile: src/auto.yml
+            includePaths:
+              - ./src
             gccRequired: true
             """);
         
         ParserConfig config = ConfigLoader.autoLoad(tempDir);
         
-        assertEquals("src/auto.yml", config.headerFile());
+        assertEquals(List.of("./src"), config.includePaths());
     }
     
     @Test
@@ -216,12 +212,12 @@ public class ConfigLoaderTest {
     @DisplayName("自动加载 JSON 配置（YAML/YML 不存在时）")
     void testAutoLoadJson() throws IOException {
         Files.writeString(tempDir.resolve("struct-parser.json"), """
-            {"headerFile": "src/auto.json", "gccRequired": true}
+            {"includePaths": ["./src"], "gccRequired": true}
             """);
         
         ParserConfig config = ConfigLoader.autoLoad(tempDir);
         
-        assertEquals("src/auto.json", config.headerFile());
+        assertEquals(List.of("./src"), config.includePaths());
     }
     
     @Test
@@ -244,8 +240,7 @@ public class ConfigLoaderTest {
     void testSaveYamlConfig() throws IOException {
         Path configFile = tempDir.resolve("saved.yaml");
         ParserConfig config = new ParserConfig(
-            "src/saved.h",
-            List.of("./inc"),
+            List.of("./inc", "./src"),
             "arm-gcc",
             true,
             new ParserConfig.OutputConfig("json", "out.json")
@@ -255,7 +250,7 @@ public class ConfigLoaderTest {
         
         assertTrue(Files.exists(configFile), "Config file should be created");
         String content = Files.readString(configFile);
-        assertTrue(content.contains("src/saved.h"), "Should contain header file");
+        assertTrue(content.contains("./inc"), "Should contain include path");
         assertTrue(content.contains("arm-gcc"), "Should contain GCC command");
     }
     
@@ -265,8 +260,7 @@ public class ConfigLoaderTest {
     void testSaveJsonConfig() throws IOException {
         Path configFile = tempDir.resolve("saved.json");
         ParserConfig config = new ParserConfig(
-            "src/saved.h",
-            List.of(),
+            List.of("./include"),
             "gcc",
             true,
             null
@@ -276,26 +270,31 @@ public class ConfigLoaderTest {
         
         assertTrue(Files.exists(configFile), "Config file should be created");
         String content = Files.readString(configFile);
-        assertTrue(content.contains("src/saved.h"), "Should contain header file");
+        assertTrue(content.contains("./include"), "Should contain include path");
     }
     
     // ========== 路径转换测试 ==========
     
     @Test
     @Order(60)
-    @DisplayName("获取头文件路径")
-    void testGetHeaderFilePath() {
+    @DisplayName("验证包含路径")
+    void testValidateIncludePaths() throws IOException {
+        Path tempDir = Files.createTempDirectory("test");
+        Path includeDir = tempDir.resolve("include");
+        Files.createDirectories(includeDir);
+        
         ParserConfig config = new ParserConfig(
-            "src/test.h",
-            List.of(),
+            List.of(includeDir.toString()),
             "gcc",
             true,
             null
         );
         
-        Path path = config.getHeaderFilePath();
-        assertNotNull(path);
-        assertEquals("test.h", path.getFileName().toString());
+        assertDoesNotThrow(config::validate, "Valid include path should not throw");
+        
+        // 清理
+        Files.deleteIfExists(includeDir);
+        Files.deleteIfExists(tempDir);
     }
     
     @Test
@@ -303,7 +302,6 @@ public class ConfigLoaderTest {
     @DisplayName("获取包含路径列表")
     void testGetIncludePaths() {
         ParserConfig config = new ParserConfig(
-            "src/test.h",
             List.of("./inc", "./drivers"),
             "gcc",
             true,
