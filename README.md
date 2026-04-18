@@ -5,7 +5,7 @@
 [![Maven](https://img.shields.io/badge/Maven-3.9+-green.svg)](https://maven.apache.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A C-style struct/union parser with ANTLR4, designed for embedded systems and hardware register description. Supports `#include` preprocessing, cross-file struct references, and generates JSON output with bit-level field layout.
+A C-style struct/union parser with ANTLR4 and GCC preprocessing, designed for embedded systems and hardware register description. Supports configuration-driven parsing, cross-file struct references, and generates JSON output with bit-level field layout.
 
 ## Features
 
@@ -13,11 +13,17 @@ A C-style struct/union parser with ANTLR4, designed for embedded systems and har
 - **Nested Types**: Support nested and anonymous struct/union
 - **Custom Types**: uint1~uint32 data types with implicit bit-width
 - **No Byte Alignment**: Fields are packed tightly (bit-level layout)
-- **#include Support**: Preprocess header files with search paths
+- **GCC Preprocessing**: Full C preprocessor support via `gcc -E`
+- **Configuration-Driven**: YAML/JSON configuration for batch parsing
 - **Cross-File References**: Reference structs defined in other headers
 - **JSON Output**: Generate structured JSON with field offsets and sizes
 
 ## Quick Start
+
+### Prerequisites
+
+- Java 26 or later
+- GCC installed (required for preprocessing)
 
 ### Build
 
@@ -25,22 +31,37 @@ A C-style struct/union parser with ANTLR4, designed for embedded systems and har
 mvn clean package
 ```
 
+### Configuration
+
+Create `struct-parser.yaml` in your working directory:
+
+```yaml
+includePaths:
+  - ./include
+  - ./drivers
+gccCommand: gcc
+gccRequired: true
+output:
+  format: json
+  outputFile: output.json
+```
+
 ### Run
 
 ```bash
-# Parse a header file
-java -jar target/struct-parser-1.0.0-jar-with-dependencies.jar parse input.h
+# Parse all headers in configured includePaths
+java -jar target/struct-parser-1.0.0-jar-with-dependencies.jar
 
-# With include paths
-java -jar target/struct-parser-1.0.0-jar-with-dependencies.jar parse input.h -I ./include -I /usr/local/include
+# Check GCC availability
+java -jar target/struct-parser-1.0.0-jar-with-dependencies.jar gcc-info
 
-# Run built-in example
-java -jar target/struct-parser-1.0.0-jar-with-dependencies.jar example
+# Show help
+java -jar target/struct-parser-1.0.0-jar-with-dependencies.jar help
 ```
 
 ## Example
 
-### Input
+### Input (Header Files)
 
 ```c
 // Control register definition
@@ -90,6 +111,57 @@ struct PacketHeader {
 }
 ```
 
+## Configuration
+
+### Configuration File
+
+The tool requires a configuration file (`struct-parser.yaml`, `struct-parser.yml`, or `struct-parser.json`) in the working directory.
+
+### Configuration Options
+
+| Option | Required | Default | Description |
+|--------|----------|---------|-------------|
+| `includePaths` | Yes | - | List of directories to scan for header files |
+| `gccCommand` | No | `gcc` | GCC command to use for preprocessing |
+| `gccRequired` | Yes | `true` | Must be `true` (GCC preprocessing is mandatory) |
+| `output.format` | No | `json` | Output format (currently only `json`) |
+| `output.outputFile` | No | stdout | Output file path (if not specified, prints to stdout) |
+
+### Example Configurations
+
+**Basic YAML:**
+```yaml
+includePaths:
+  - ./include
+  - ./drivers
+gccCommand: gcc
+gccRequired: true
+```
+
+**With output file:**
+```yaml
+includePaths:
+  - ./include
+gccCommand: arm-none-eabi-gcc
+gccRequired: true
+output:
+  format: json
+  outputFile: output/structs.json
+```
+
+**JSON format:**
+```json
+{
+  "includePaths": ["./include", "./drivers"],
+  "gccCommand": "gcc",
+  "gccRequired": true,
+  "output": {
+    "format": "json",
+    "outputFile": "output.json"
+  }
+}
+```
+
 ## Multi-File Support
 
 Reference structs from other headers:
@@ -109,10 +181,7 @@ struct DataReg {
 };
 ```
 
-Parse with include path:
-```bash
-java -jar struct-parser.jar parse device.h -I ./include
-```
+Place both files in directories listed in `includePaths`, and the parser will resolve cross-file references after GCC preprocessing.
 
 ## Syntax
 
@@ -179,38 +248,56 @@ typedef struct {
 } RegPair;
 ```
 
+## How It Works
+
+1. **Configuration Loading**: Reads `struct-parser.yaml` (or `.yml`, `.json`)
+2. **Header File Scanning**: Scans `includePaths` directories for `.h`, `.hpp`, `.hh`, `.hxx` files
+3. **GCC Preprocessing**: Runs `gcc -E -P -C -nostdinc` to preprocess headers
+4. **ANTLR4 Parsing**: Parses the preprocessed code using ANTLR4 grammar
+5. **Result Merging**: Merges results from all header files
+6. **JSON Generation**: Outputs structured JSON with field offsets and sizes
+
 ## Architecture
 
 ```
 src/
 ├── main/antlr4/
-│   └── StructParser.g4          # ANTLR4 grammar
+│   └── StructParser.g4              # ANTLR4 grammar
 ├── main/java/
+│   ├── config/
+│   │   ├── ParserConfig.java        # Configuration model (Record)
+│   │   └── ConfigLoader.java        # YAML/JSON config loader
 │   ├── parser/
-│   │   ├── StructParserService.java   # Entry point
-│   │   ├── StructParseVisitor.java    # AST visitor
-│   │   └── HeaderFileLoader.java      # #include handler
+│   │   ├── StructParserService.java # Main parsing service
+│   │   ├── StructParseVisitor.java  # AST visitor
+│   │   ├── GccPreprocessor.java     # GCC preprocessing
+│   │   └── HeaderFileScanner.java   # Header file discovery
 │   ├── model/
-│   │   ├── Struct.java          # Struct model (Record)
-│   │   ├── Union.java           # Union model (Record)
-│   │   ├── Field.java           # Field model (Record)
-│   │   ├── Type.java            # Type definitions
-│   │   └── ParseResult.java     # Result container (Record)
+│   │   ├── Struct.java              # Struct model (Record)
+│   │   ├── Union.java               # Union model (Record)
+│   │   ├── Field.java               # Field model (Record)
+│   │   ├── Type.java                # Type definitions
+│   │   └── ParseResult.java         # Result container (Record)
 │   └── generator/
-│       └── JsonGenerator.java   # JSON output
+│       └── JsonGenerator.java       # JSON output generator
 └── test/
     └── java/
         └── parser/
             ├── StructParserServiceTest.java
-            └── MultiFileParserTest.java
+            ├── GccPreprocessorTest.java
+            ├── MultiFileParserTest.java
+            └── integration/
+                └── GccIntegrationTest.java
 ```
 
 ## Tech Stack
 
-- **Java 26**: Modern Java with Record classes and pattern matching
+- **Java 26**: Modern Java with Record classes, Switch Expressions, and Pattern Matching
 - **ANTLR 4.13.1**: Parser generator for robust grammar parsing
 - **Maven 3.9+**: Build and dependency management
-- **JUnit 5**: Unit testing (38 tests)
+- **JUnit 5**: Unit testing (84 tests)
+- **Jackson**: JSON and YAML processing
+- **GCC**: C preprocessor for header files
 
 ## Development
 
@@ -237,7 +324,6 @@ mvn clean package
 
 - **Forward References**: Not supported (struct must be defined before use)
 - **Arrays**: Array syntax (`uint8 arr[4]`) not supported, use expanded form
-- **Preprocessing**: Limited to `#include`, no macro expansion
 - **Standard C Types**: Only `uint1~uint32` supported, no `int/char/float`
 
 ## Roadmap
@@ -253,6 +339,11 @@ mvn clean package
 - [ ] Macro definition support
 - [ ] IDE plugin
 - [ ] LSP protocol support
+
+## Documentation
+
+- [Requirements](doc/requirements.md) - Detailed requirements document
+- [Wiki](doc/WIKI.md) - Project wiki with usage guide
 
 ## License
 
