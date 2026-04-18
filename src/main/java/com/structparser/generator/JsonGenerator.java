@@ -93,6 +93,21 @@ public class JsonGenerator {
         map.put("type", field.type().toString().toLowerCase());
         map.put("bits", field.bitWidth());
         map.put("offset", field.bitOffset());
+        
+        // 如果有嵌套的 struct，添加其 fields
+        if (field.nestedStruct() != null) {
+            map.put("fields", field.nestedStruct().fields().stream()
+                .map(this::convertField)
+                .toList());
+        }
+        
+        // 如果有嵌套的 union，添加其 fields
+        if (field.nestedUnion() != null) {
+            map.put("fields", field.nestedUnion().fields().stream()
+                .map(this::convertField)
+                .toList());
+        }
+        
         return map;
     }
 }

@@ -102,8 +102,16 @@ public class StructParserServiceTest {
         assertEquals(1, result.structs().size());
         
         Struct outer = result.structs().get(0);
-        assertEquals(3, outer.fields().size()); // header + inner.a + inner.b
+        assertEquals(2, outer.fields().size()); // header + inner (nested struct)
         assertEquals(24, outer.totalBits());
+        
+        // 验证嵌套的 struct
+        var innerField = outer.fields().stream()
+            .filter(f -> f.name().equals("inner"))
+            .findFirst();
+        assertTrue(innerField.isPresent());
+        assertNotNull(innerField.get().nestedStruct());
+        assertEquals(2, innerField.get().nestedStruct().fields().size());
     }
     
     @Test
@@ -125,7 +133,17 @@ public class StructParserServiceTest {
         
         assertFalse(result.hasErrors(), "Errors: " + result.errors());
         assertEquals(1, result.structs().size());
-        assertEquals(1, result.unions().size());
+        // 匿名 union 不再单独添加到顶层 unions 数组
+        assertEquals(0, result.unions().size());
+        
+        // 验证嵌套的 union
+        Struct container = result.structs().get(0);
+        var dataField = container.fields().stream()
+            .filter(f -> f.name().equals("data"))
+            .findFirst();
+        assertTrue(dataField.isPresent());
+        assertNotNull(dataField.get().nestedUnion());
+        assertEquals(2, dataField.get().nestedUnion().fields().size());
     }
     
     @Test
@@ -265,8 +283,21 @@ public class StructParserServiceTest {
         
         assertFalse(result.hasErrors());
         Struct struct = result.structs().get(0);
-        assertEquals(4, struct.fields().size()); // a, b, c, d
+        assertEquals(2, struct.fields().size()); // a + level2
         assertEquals(32, struct.totalBits());
+        
+        // 验证多层嵌套
+        var level2Field = struct.fields().stream()
+            .filter(f -> f.name().equals("level2"))
+            .findFirst();
+        assertTrue(level2Field.isPresent());
+        assertNotNull(level2Field.get().nestedStruct());
+        
+        var level3Field = level2Field.get().nestedStruct().fields().stream()
+            .filter(f -> f.name().equals("level3"))
+            .findFirst();
+        assertTrue(level3Field.isPresent());
+        assertNotNull(level3Field.get().nestedStruct());
     }
     
     @Test
@@ -286,7 +317,23 @@ public class StructParserServiceTest {
         ParseResult result = parser.parse(input);
         
         assertFalse(result.hasErrors());
-        assertEquals(2, result.unions().size()); // 外层union + 内层union
+        // 匿名 union 不再单独添加到顶层
+        assertEquals(0, result.unions().size());
+        
+        // 验证嵌套的 union
+        Struct test = result.structs().get(0);
+        var dataField = test.fields().stream()
+            .filter(f -> f.name().equals("data"))
+            .findFirst();
+        assertTrue(dataField.isPresent());
+        assertNotNull(dataField.get().nestedUnion());
+        
+        // 验证内层嵌套 union
+        var nestedField = dataField.get().nestedUnion().fields().stream()
+            .filter(f -> f.name().equals("nested"))
+            .findFirst();
+        assertTrue(nestedField.isPresent());
+        assertNotNull(nestedField.get().nestedUnion());
     }
     
     @Test
@@ -311,7 +358,21 @@ public class StructParserServiceTest {
         Struct struct = result.structs().get(0);
         // header + data(union作为整体) + footer = 3个字段
         assertEquals(3, struct.fields().size());
-        assertEquals(1, result.unions().size());
+        // 匿名 union 不再单独添加到顶层
+        assertEquals(0, result.unions().size());
+        
+        // 验证嵌套的 union 和 struct
+        var dataField = struct.fields().stream()
+            .filter(f -> f.name().equals("data"))
+            .findFirst();
+        assertTrue(dataField.isPresent());
+        assertNotNull(dataField.get().nestedUnion());
+        
+        var bytesField = dataField.get().nestedUnion().fields().stream()
+            .filter(f -> f.name().equals("bytes"))
+            .findFirst();
+        assertTrue(bytesField.isPresent());
+        assertNotNull(bytesField.get().nestedStruct());
     }
     
     @Test

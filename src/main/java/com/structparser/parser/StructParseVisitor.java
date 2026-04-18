@@ -43,7 +43,8 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
         if (stack.isEmpty()) {
             result = result.withStruct(struct);
         } else {
-            addField(name, Type.STRUCT, struct.totalBits());
+            // 嵌套的 struct，添加到父字段中并保留嵌套信息
+            addNestedField(name, Type.STRUCT, struct.totalBits(), struct, null);
         }
         return struct;
     }
@@ -63,7 +64,8 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
         if (stack.isEmpty()) {
             result = result.withUnion(union);
         } else {
-            addField(name, Type.UNION, union.totalBits());
+            // 嵌套的 union，添加到父字段中并保留嵌套信息
+            addNestedField(name, Type.UNION, union.totalBits(), null, union);
         }
         return union;
     }
@@ -78,7 +80,11 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
         
         // 匿名结构体: struct { ... } name;
         if (first.equals("struct") && ctx.fieldList() != null) {
-            visit(ctx.fieldList()); // 展开字段
+            String fieldName = ctx.fieldName().getText();
+            var fields = parseFields(ctx.fieldList());
+            var struct = new Struct(null, fields, true);
+            // 不添加到顶层 structs，只作为嵌套字段
+            addNestedField(fieldName, Type.STRUCT, struct.totalBits(), struct, null);
             return null;
         }
         
@@ -87,8 +93,8 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
             String fieldName = ctx.fieldName().getText();
             var fields = parseUnionFields(ctx.fieldList());
             var union = new Union(null, fields, true);
-            result = result.withUnion(union);
-            addField(fieldName, Type.UNION, union.totalBits());
+            // 不添加到顶层 unions，只作为嵌套字段
+            addNestedField(fieldName, Type.UNION, union.totalBits(), null, union);
             return null;
         }
         
@@ -97,7 +103,13 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
             String structName = ctx.Identifier().getText();
             String fieldName = ctx.fieldName().getText();
             var ref = result.getStructByName(structName);
-            addField(fieldName, Type.STRUCT, ref != null ? ref.totalBits() : 0);
+            if (ref != null) {
+                // 保留嵌套的 struct 信息
+                addNestedField(fieldName, Type.STRUCT, ref.totalBits(), ref, null);
+            } else {
+                addError(ctx, "Undefined struct: " + structName);
+                addField(fieldName, Type.STRUCT, 0);
+            }
             return null;
         }
         
@@ -106,7 +118,13 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
             String unionName = ctx.Identifier().getText();
             String fieldName = ctx.fieldName().getText();
             var ref = result.getUnionByName(unionName);
-            addField(fieldName, Type.UNION, ref != null ? ref.totalBits() : 0);
+            if (ref != null) {
+                // 保留嵌套的 union 信息
+                addNestedField(fieldName, Type.UNION, ref.totalBits(), null, ref);
+            } else {
+                addError(ctx, "Undefined union: " + unionName);
+                addField(fieldName, Type.UNION, 0);
+            }
             return null;
         }
         
@@ -146,7 +164,8 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
         var result = new ArrayList<Field>();
         int offset = 0;
         for (Field f : context.fields) {
-            result.add(new Field(f.name(), f.type(), f.bitWidth(), offset));
+            // 保留嵌套的 struct/union 信息
+            result.add(new Field(f.name(), f.type(), f.bitWidth(), offset, f.nestedStruct(), f.nestedUnion()));
             offset += f.bitWidth();
         }
         return result;
@@ -161,13 +180,25 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
         
         // 联合体偏移量都为0
         return context.fields.stream()
-            .map(f -> new Field(f.name(), f.type(), f.bitWidth(), 0))
+            .map(f -> new Field(f.name(), f.type(), f.bitWidth(), 0, f.nestedStruct(), f.nestedUnion()))
             .toList();
     }
     
     private void addField(String name, Type type, int width) {
         if (!stack.isEmpty()) {
             stack.peek().fields.add(Field.of(name, type, width));
+        }
+    }
+    
+    private void addNestedField(String name, Type type, int width, Struct nestedStruct, Union nestedUnion) {
+        if (!stack.isEmpty()) {
+            if (nestedStruct != null) {
+                stack.peek().fields.add(Field.withNestedStruct(name, width, 0, nestedStruct));
+            } else if (nestedUnion != null) {
+                stack.peek().fields.add(Field.withNestedUnion(name, width, 0, nestedUnion));
+            } else {
+                stack.peek().fields.add(Field.of(name, type, width));
+            }
         }
     }
     

@@ -126,12 +126,15 @@ struct Container {
 
 ### JSON 输出示例
 
+#### 基础结构体
+
 ```json
 {
   "structs": [{
     "name": "ControlReg",
     "type": "struct",
     "size_bits": 32,
+    "anonymous": false,
     "fields": [
       {"name": "enable",     "type": "uint1",  "bits": 1,  "offset": 0},
       {"name": "interrupt",  "type": "uint1",  "bits": 1,  "offset": 1},
@@ -141,6 +144,97 @@ struct Container {
       {"name": "timeout",    "type": "uint16", "bits": 16, "offset": 16}
     ]
   }],
+  "unions": []
+}
+```
+
+#### 嵌套结构体/联合体
+
+当 struct 包含嵌套的 struct 或 union 时，嵌套的 fields 会作为子数组包含在字段中：
+
+**匿名嵌套：**
+
+```json
+{
+  "structs": [{
+    "name": "Outer",
+    "type": "struct",
+    "size_bits": 40,
+    "anonymous": false,
+    "fields": [
+      {"name": "header", "type": "uint8", "bits": 8, "offset": 0},
+      {
+        "name": "inner",
+        "type": "struct",
+        "bits": 16,
+        "offset": 8,
+        "fields": [
+          {"name": "a", "type": "uint8", "bits": 8, "offset": 0},
+          {"name": "b", "type": "uint8", "bits": 8, "offset": 8}
+        ]
+      }
+    ]
+  }],
+  "unions": []
+}
+```
+
+**具名引用（保留嵌套结构）：**
+
+```c
+struct Point {
+    uint16 x;
+    uint16 y;
+};
+
+struct Rectangle {
+    struct Point topLeft;
+    struct Point bottomRight;
+};
+```
+
+```json
+{
+  "structs": [
+    {
+      "name": "Point",
+      "type": "struct",
+      "size_bits": 32,
+      "anonymous": false,
+      "fields": [
+        {"name": "x", "type": "uint16", "bits": 16, "offset": 0},
+        {"name": "y", "type": "uint16", "bits": 16, "offset": 16}
+      ]
+    },
+    {
+      "name": "Rectangle",
+      "type": "struct",
+      "size_bits": 64,
+      "anonymous": false,
+      "fields": [
+        {
+          "name": "topLeft",
+          "type": "struct",
+          "bits": 32,
+          "offset": 0,
+          "fields": [
+            {"name": "x", "type": "uint16", "bits": 16, "offset": 0},
+            {"name": "y", "type": "uint16", "bits": 16, "offset": 16}
+          ]
+        },
+        {
+          "name": "bottomRight",
+          "type": "struct",
+          "bits": 32,
+          "offset": 32,
+          "fields": [
+            {"name": "x", "type": "uint16", "bits": 16, "offset": 0},
+            {"name": "y", "type": "uint16", "bits": 16, "offset": 16}
+          ]
+        }
+      ]
+    }
+  ],
   "unions": []
 }
 ```
