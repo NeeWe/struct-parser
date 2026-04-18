@@ -1,5 +1,7 @@
 package com.structparser;
 
+import com.structparser.config.ConfigLoader;
+import com.structparser.config.ParserConfig;
 import com.structparser.generator.JsonGenerator;
 import com.structparser.model.ParseResult;
 import com.structparser.parser.GccPreprocessor;
@@ -11,7 +13,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 /**
- * 应用程序入口 - 支持 GCC 预处理和自定义 #include
+ * 应用程序入口 - 强制使用配置文件和 GCC 预处理
  */
 public class StructParserApp {
     
@@ -25,16 +27,11 @@ public class StructParserApp {
         
         switch (command) {
             case "parse":
-                if (args.length < 2) {
-                    System.err.println("Error: Missing input file path");
-                    printUsage();
-                    System.exit(1);
-                }
-                parseFile(args);
+                parseWithConfig(args);
                 break;
                 
-            case "example":
-                parseExample();
+            case "init":
+                generateExampleConfig(args);
                 break;
                 
             case "gcc-info":
@@ -48,117 +45,119 @@ public class StructParserApp {
         }
     }
     
-    private static void parseFile(String[] args) {
-        String filePath = args[1];
-        boolean useGcc = false;
-        String gccCommand = "gcc";
-        var searchPaths = new java.util.ArrayList<String>();
-        
-        // 解析选项
-        for (int i = 2; i < args.length; i++) {
-            switch (args[i]) {
-                case "-I":
-                    if (i + 1 < args.length) {
-                        searchPaths.add(args[i + 1]);
-                        i++;
-                    }
-                    break;
-                case "--gcc":
-                    useGcc = true;
-                    break;
-                case "--gcc-cmd":
-                    if (i + 1 < args.length) {
-                        gccCommand = args[i + 1];
-                        i++;
-                    }
-                    break;
-            }
+    /**
+     * 使用配置文件解析头文件
+     */
+    private static void parseWithConfig(String[] args) {
+        // 检查 GCC 是否可用（强制要求）
+        if (!GccPreprocessor.isGccAvailable()) {
+            System.err.println("Error: GCC is required but not available.");
+            System.err.println("Please install GCC to use this tool.");
+            System.exit(1);
         }
         
+        // 加载配置文件
+        ParserConfig config;
+        try {
+            if (args.length >= 2) {
+                // 使用指定的配置文件
+                config = ConfigLoader.load(Paths.get(args[1]));
+            } else {
+                // 自动查找配置文件
+                config = ConfigLoader.autoLoad(Paths.get("."));
+            }
+        } catch (IOException e) {
+            System.err.println("Error loading configuration: " + e.getMessage());
+            System.exit(1);
+            return;
+        }
+        
+        // 验证配置
+        try {
+            config.validate();
+        } catch (IllegalStateException e) {
+            System.err.println("Error: Invalid configuration - " + e.getMessage());
+            System.exit(1);
+            return;
+        }
+        
+        // 解析头文件
+        parseWithGccPreprocessing(config);
+    }
+    
+    /**
+     * 使用 GCC 预处理解析头文件
+     */
+    private static void parseWithGccPreprocessing(ParserConfig config) {
         var service = new StructParserService();
         var generator = new JsonGenerator();
         
-        // 添加搜索路径
-        for (String path : searchPaths) {
+        // 配置 GCC 预处理（强制启用）
+        service.enableGccPreprocessing();
+        service.setGccCommand(config.gccCommand());
+        
+        // 添加包含路径
+        for (Path path : config.getIncludePaths()) {
             service.addSearchPath(path);
         }
         
-        // 配置 GCC 预处理
-        if (useGcc) {
-            if (!StructParserService.isGccAvailable()) {
-                System.err.println("Error: GCC is not available. Please install GCC or remove --gcc option.");
-                System.exit(1);
-            }
-            service.enableGccPreprocessing();
-            service.setGccCommand(gccCommand);
-        }
-        
         try {
-            Path path = Paths.get(filePath);
-            if (!Files.exists(path)) {
-                System.err.println("Error: File not found: " + filePath);
-                System.exit(1);
-            }
+            Path headerPath = config.getHeaderFilePath();
+            System.err.println("Parsing: " + headerPath);
+            System.err.println("Using GCC: " + config.gccCommand());
             
-            ParseResult result = service.parseFile(path);
+            ParseResult result = service.parseFile(headerPath);
             String json = generator.generate(result);
             
-            System.out.println(json);
+            // 输出结果
+            if (config.output() != null && config.output().outputFile() != null) {
+                // 写入文件
+                Path outputPath = Paths.get(config.output().outputFile());
+                Files.writeString(outputPath, json);
+                System.err.println("Output written to: " + outputPath);
+            } else {
+                // 输出到标准输出
+                System.out.println(json);
+            }
             
+            // 报告错误
             if (result.hasErrors()) {
                 System.err.println("\nParsing completed with errors:");
                 for (String error : result.errors()) {
                     System.err.println("  - " + error);
                 }
                 System.exit(2);
+            } else {
+                System.err.println("Parsing completed successfully.");
             }
             
         } catch (IOException e) {
-            System.err.println("Error reading file: " + e.getMessage());
+            System.err.println("Error: " + e.getMessage());
             System.exit(1);
         }
     }
     
-    private static void parseExample() {
-        String example = """
-            // 控制寄存器定义
-            struct ControlReg {
-                uint1  enable;
-                uint1  interrupt;
-                uint2  mode;
-                uint4  reserved;
-                uint8  prescale;
-                uint16 timeout;
-            };
-            
-            // 数据包头部
-            struct PacketHeader {
-                uint8  version;
-                uint8  type;
-                uint16 length;
-                union {
-                    uint32 raw;
-                    struct {
-                        uint16 low;
-                        uint16 high;
-                    } words;
-                } checksum;
-            };
-            """;
+    /**
+     * 生成示例配置文件
+     */
+    private static void generateExampleConfig(String[] args) {
+        Path outputPath = args.length >= 2 ? Paths.get(args[1]) : Paths.get("struct-parser.yaml");
         
-        var service = new StructParserService();
-        var generator = new JsonGenerator();
+        var exampleConfig = new ParserConfig(
+            "src/registers.h",
+            java.util.List.of("./include", "./drivers"),
+            "gcc",
+            true,
+            new ParserConfig.OutputConfig("json", "output/structs.json")
+        );
         
-        ParseResult result = service.parse(example);
-        String json = generator.generate(result);
-        
-        System.out.println("=== Example Input ===");
-        System.out.println(example);
-        System.out.println("\n=== Parsed Output ===");
-        System.out.println(json);
-        
-        if (result.hasErrors()) {
-            System.err.println("\nParsing completed with errors.");
+        try {
+            ConfigLoader.save(exampleConfig, outputPath);
+            System.out.println("Example configuration generated: " + outputPath);
+            System.out.println("\nPlease edit the file to specify your header file path.");
+        } catch (IOException e) {
+            System.err.println("Error generating config: " + e.getMessage());
+            System.exit(1);
         }
     }
     
@@ -168,40 +167,57 @@ public class StructParserApp {
         System.out.println();
         
         boolean available = GccPreprocessor.isGccAvailable();
-        System.out.println("GCC Available: " + (available ? "Yes" : "No"));
+        System.out.println("GCC Available: " + (available ? "Yes ✓" : "No ✗"));
         
         if (available) {
             System.out.println("GCC Version: " + GccPreprocessor.getGccVersion());
+            System.out.println();
+            System.out.println("Status: Ready to parse header files with GCC preprocessing.");
         } else {
-            System.out.println("GCC is not found in PATH.");
-            System.out.println("Please install GCC to use --gcc option.");
+            System.out.println();
+            System.out.println("Status: GCC is required but not found in PATH.");
+            System.out.println("Please install GCC to use this tool.");
+            System.out.println();
+            System.out.println("Installation:");
+            System.out.println("  macOS:  xcode-select --install");
+            System.out.println("  Ubuntu: sudo apt-get install gcc");
+            System.out.println("  Windows: Install MinGW-w64 or WSL");
         }
     }
     
     private static void printUsage() {
-        System.out.println("Struct Parser - C-style struct/union parser with #include support");
+        System.out.println("Struct Parser - C-style struct/union parser with GCC preprocessing");
         System.out.println();
         System.out.println("Usage:");
         System.out.println("  java -jar struct-parser.jar <command> [options]");
         System.out.println();
         System.out.println("Commands:");
-        System.out.println("  parse <file> [options]     Parse a struct definition file");
-        System.out.println("    Options:");
-        System.out.println("      -I <path>              Add include search path");
-        System.out.println("      --gcc                  Use GCC preprocessor (gcc -E)");
-        System.out.println("      --gcc-cmd <command>    Use custom GCC command (e.g., arm-none-eabi-gcc)");
-        System.out.println("  example                    Run with built-in example");
-        System.out.println("  gcc-info                   Check GCC availability");
+        System.out.println("  parse [config-file]        Parse header file specified in config");
+        System.out.println("                             Uses struct-parser.yaml if no config specified");
+        System.out.println("  init [output-file]         Generate example configuration file");
+        System.out.println("                             Default: struct-parser.yaml");
+        System.out.println("  gcc-info                   Check GCC availability and version");
         System.out.println("  help                       Show this help message");
         System.out.println();
+        System.out.println("Configuration File (YAML/JSON):");
+        System.out.println("  headerFile:    Path to the header file to parse (required)");
+        System.out.println("  includePaths:  List of include search paths");
+        System.out.println("  gccCommand:    GCC command to use (default: gcc)");
+        System.out.println("  output:        Output configuration");
+        System.out.println("    format:      Output format (json)");
+        System.out.println("    outputFile:  Output file path (optional, stdout if not set)");
+        System.out.println();
         System.out.println("Examples:");
-        System.out.println("  # Parse with custom #include handler");
-        System.out.println("  java -jar struct-parser.jar parse input.h -I ./include");
+        System.out.println("  # Generate example config");
+        System.out.println("  java -jar struct-parser.jar init");
         System.out.println();
-        System.out.println("  # Parse with GCC preprocessing");
-        System.out.println("  java -jar struct-parser.jar parse input.h --gcc -I ./include");
+        System.out.println("  # Parse with auto-detected config");
+        System.out.println("  java -jar struct-parser.jar parse");
         System.out.println();
-        System.out.println("  # Use cross-compiler for preprocessing");
-        System.out.println("  java -jar struct-parser.jar parse input.h --gcc --gcc-cmd arm-none-eabi-gcc");
+        System.out.println("  # Parse with specific config");
+        System.out.println("  java -jar struct-parser.jar parse my-config.yaml");
+        System.out.println();
+        System.out.println("  # Check GCC");
+        System.out.println("  java -jar struct-parser.jar gcc-info");
     }
 }
