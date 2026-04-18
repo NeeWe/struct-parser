@@ -244,7 +244,7 @@ public class StructParserApp {
         System.out.println("      outputFile: output.json");
         System.out.println();
         System.out.println("Features:");
-        System.out.println("  - Recursively scans all .h, .hpp files in includePaths");
+        System.out.println("  - Scans .h, .hpp files in includePaths (non-recursive)");
         System.out.println("  - GCC preprocessing is mandatory");
         System.out.println("  - Merges results from all header files");
         System.out.println();

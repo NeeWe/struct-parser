@@ -1,8 +1,8 @@
 package com.structparser.parser;
 
 import java.io.IOException;
-import java.nio.file.*;
-import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -14,7 +14,7 @@ public class HeaderFileScanner {
     private static final String[] HEADER_EXTENSIONS = {".h", ".hpp", ".hh", ".hxx"};
     
     /**
-     * 扫描单个目录及其子目录中的所有头文件
+     * 扫描单个目录中的头文件（不递归子目录）
      */
     public static List<Path> scan(Path directory) throws IOException {
         var headerFiles = new ArrayList<Path>();
@@ -27,7 +27,12 @@ public class HeaderFileScanner {
             throw new IOException("Path is not a directory: " + directory);
         }
         
-        Files.walkFileTree(directory, new HeaderFileVisitor(headerFiles));
+        // 只扫描当前目录，不递归子目录
+        try (var stream = Files.list(directory)) {
+            stream.filter(Files::isRegularFile)
+                  .filter(HeaderFileScanner::isHeaderFile)
+                  .forEach(headerFiles::add);
+        }
         
         return headerFiles;
     }
@@ -56,31 +61,6 @@ public class HeaderFileScanner {
             }
         }
         return false;
-    }
-    
-    /**
-     * 文件访问器 - 用于遍历目录树
-     */
-    private static class HeaderFileVisitor extends SimpleFileVisitor<Path> {
-        private final List<Path> headerFiles;
-        
-        HeaderFileVisitor(List<Path> headerFiles) {
-            this.headerFiles = headerFiles;
-        }
-        
-        @Override
-        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-            if (isHeaderFile(file)) {
-                headerFiles.add(file);
-            }
-            return FileVisitResult.CONTINUE;
-        }
-        
-        @Override
-        public FileVisitResult visitFileFailed(Path file, IOException exc) {
-            // 忽略无法访问的文件
-            return FileVisitResult.CONTINUE;
-        }
     }
     
     /**
