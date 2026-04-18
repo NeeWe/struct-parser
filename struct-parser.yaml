@@ -1,0 +1,30 @@
+# Struct Parser 默认配置文件
+# 将此文件放在项目根目录或指定路径
+
+# 必需：要解析的头文件路径
+# 可以是相对路径或绝对路径
+headerFile: src/registers.h
+
+# 可选：头文件搜索路径列表
+# GCC 预处理和自定义 #include 都会使用这些路径
+includePaths:
+  - ./include
+  - ./drivers
+  - ./hal
+
+# 可选：GCC 命令
+# 默认使用系统 gcc，可以指定交叉编译器如 arm-none-eabi-gcc
+gccCommand: gcc
+
+# 必需：强制使用 GCC 预处理
+# 必须为 true，确保解析前进行标准 C 预处理
+gccRequired: true
+
+# 可选：输出配置
+output:
+  # 输出格式：目前仅支持 json
+  format: json
+  
+  # 输出文件路径
+  # 如果不指定，将输出到标准输出 (stdout)
+  # outputFile: output/structs.json

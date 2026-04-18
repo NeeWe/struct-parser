@@ -58,13 +58,26 @@ public class StructParserApp {
         
         // 加载配置文件
         ParserConfig config;
+        Path configPath = null;
         try {
             if (args.length >= 2) {
                 // 使用指定的配置文件
-                config = ConfigLoader.load(Paths.get(args[1]));
+                configPath = Paths.get(args[1]);
+                config = ConfigLoader.load(configPath);
             } else {
                 // 自动查找配置文件
-                config = ConfigLoader.autoLoad(Paths.get("."));
+                try {
+                    config = ConfigLoader.autoLoad(Paths.get("."));
+                } catch (IOException e) {
+                    // 未找到配置文件，生成默认配置
+                    System.err.println("Configuration file not found. Generating default config...");
+                    configPath = Paths.get("struct-parser.yaml");
+                    generateDefaultConfig(configPath);
+                    System.err.println("Default configuration generated: " + configPath);
+                    System.err.println("Please edit the headerFile path and run again.");
+                    System.exit(1);
+                    return;
+                }
             }
         } catch (IOException e) {
             System.err.println("Error loading configuration: " + e.getMessage());
@@ -142,19 +155,25 @@ public class StructParserApp {
      */
     private static void generateExampleConfig(String[] args) {
         Path outputPath = args.length >= 2 ? Paths.get(args[1]) : Paths.get("struct-parser.yaml");
-        
-        var exampleConfig = new ParserConfig(
+        generateDefaultConfig(outputPath);
+    }
+    
+    /**
+     * 生成默认配置文件
+     */
+    private static void generateDefaultConfig(Path outputPath) {
+        var defaultConfig = new ParserConfig(
             "src/registers.h",
-            java.util.List.of("./include", "./drivers"),
+            java.util.List.of("./include", "./drivers", "./hal"),
             "gcc",
             true,
-            new ParserConfig.OutputConfig("json", "output/structs.json")
+            new ParserConfig.OutputConfig("json", null)
         );
         
         try {
-            ConfigLoader.save(exampleConfig, outputPath);
-            System.out.println("Example configuration generated: " + outputPath);
-            System.out.println("\nPlease edit the file to specify your header file path.");
+            ConfigLoader.save(defaultConfig, outputPath);
+            System.out.println("Default configuration generated: " + outputPath);
+            System.out.println("\nPlease edit the headerFile path and run again.");
         } catch (IOException e) {
             System.err.println("Error generating config: " + e.getMessage());
             System.exit(1);
