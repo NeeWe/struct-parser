@@ -14,35 +14,25 @@ import java.nio.file.Paths;
 import java.util.List;
 
 /**
- * 应用程序入口 - 强制从配置文件启动
+ * 应用程序入口 - 强制从配置文件启动，无参数，无默认配置生成
  */
 public class StructParserApp {
     
     public static void main(String[] args) {
-        // 无参数或帮助命令
-        if (args.length == 0 || args[0].equals("help") || args[0].equals("--help") || args[0].equals("-h")) {
-            printUsage();
-            System.exit(0);
+        // 无参数：执行解析
+        if (args.length == 0) {
+            parseWithConfig();
+            return;
         }
         
+        // 有参数：仅支持 help 和 gcc-info
         String command = args[0];
         
         switch (command) {
-            case "parse":
-                // 强制从配置文件启动，不接受其他参数
-                if (args.length > 1) {
-                    System.err.println("Error: This command does not accept additional arguments.");
-                    System.err.println("Configuration must be specified in struct-parser.yaml");
-                    printUsage();
-                    System.exit(1);
-                }
-                parseWithConfig();
-                break;
-                
-            case "init":
-                // 可选：指定输出路径
-                Path outputPath = args.length > 1 ? Paths.get(args[1]) : Paths.get("struct-parser.yaml");
-                generateDefaultConfig(outputPath);
+            case "help":
+            case "--help":
+            case "-h":
+                printUsage();
                 break;
                 
             case "gcc-info":
@@ -50,8 +40,9 @@ public class StructParserApp {
                 break;
                 
             default:
-                System.err.println("Unknown command: " + command);
-                printUsage();
+                System.err.println("Error: This program does not accept arguments.");
+                System.err.println("Run without arguments to parse using struct-parser.yaml");
+                System.err.println("Or use 'help' for usage information.");
                 System.exit(1);
         }
     }
@@ -70,22 +61,22 @@ public class StructParserApp {
         // 加载配置文件
         ParserConfig config;
         try {
-            // 自动查找配置文件
-            try {
-                config = ConfigLoader.autoLoad(Paths.get("."));
-            } catch (IOException e) {
-                // 未找到配置文件，生成默认配置
-                Path defaultConfigPath = Paths.get("struct-parser.yaml");
-                System.err.println("Configuration file not found.");
-                System.err.println();
-                generateDefaultConfig(defaultConfigPath);
-                System.err.println();
-                System.err.println("Please edit the headerFile path in " + defaultConfigPath + " and run again.");
-                System.exit(1);
-                return;
-            }
-        } catch (Exception e) {
-            System.err.println("Error loading configuration: " + e.getMessage());
+            config = ConfigLoader.autoLoad(Paths.get("."));
+        } catch (IOException e) {
+            System.err.println("Error: Configuration file not found.");
+            System.err.println();
+            System.err.println("Expected one of the following files in current directory:");
+            System.err.println("  - struct-parser.yaml");
+            System.err.println("  - struct-parser.yml");
+            System.err.println("  - struct-parser.json");
+            System.err.println();
+            System.err.println("Please create a configuration file with the following content:");
+            System.err.println();
+            System.err.println("headerFile: path/to/your/header.h");
+            System.err.println("includePaths:");
+            System.err.println("  - ./include");
+            System.err.println("gccCommand: gcc");
+            System.err.println("gccRequired: true");
             System.exit(1);
             return;
         }
@@ -156,35 +147,6 @@ public class StructParserApp {
         }
     }
     
-    /**
-     * 生成默认配置文件
-     */
-    private static void generateDefaultConfig(Path outputPath) {
-        var defaultConfig = new ParserConfig(
-            "src/registers.h",
-            List.of("./include", "./drivers", "./hal"),
-            "gcc",
-            true,
-            new ParserConfig.OutputConfig("json", null)
-        );
-        
-        try {
-            ConfigLoader.save(defaultConfig, outputPath);
-            System.out.println("Default configuration generated: " + outputPath);
-            System.out.println();
-            System.out.println("Configuration contents:");
-            System.out.println("  headerFile: src/registers.h");
-            System.out.println("  includePaths: [./include, ./drivers, ./hal]");
-            System.out.println("  gccCommand: gcc");
-            System.out.println("  gccRequired: true");
-            System.out.println();
-            System.out.println("Please edit the headerFile path to point to your header file.");
-        } catch (IOException e) {
-            System.err.println("Error generating config: " + e.getMessage());
-            System.exit(1);
-        }
-    }
-    
     private static void printGccInfo() {
         System.out.println("GCC Preprocessor Information");
         System.out.println("============================");
@@ -213,37 +175,27 @@ public class StructParserApp {
         System.out.println("Struct Parser - C-style struct/union parser with GCC preprocessing");
         System.out.println();
         System.out.println("Usage:");
-        System.out.println("  java -jar struct-parser.jar <command>");
+        System.out.println("  java -jar struct-parser.jar           Parse using struct-parser.yaml");
+        System.out.println("  java -jar struct-parser.jar gcc-info  Check GCC availability");
+        System.out.println("  java -jar struct-parser.jar help      Show this help message");
         System.out.println();
-        System.out.println("Commands:");
-        System.out.println("  parse              Parse header file specified in struct-parser.yaml");
-        System.out.println("                     Configuration file is required, no arguments accepted");
-        System.out.println("  init [file]        Generate default configuration file");
-        System.out.println("                     Default: struct-parser.yaml");
-        System.out.println("  gcc-info           Check GCC availability and version");
-        System.out.println("  help               Show this help message");
+        System.out.println("Configuration File:");
+        System.out.println("  Required: struct-parser.yaml (or .yml, .json) in current directory");
         System.out.println();
-        System.out.println("Configuration File (struct-parser.yaml):");
-        System.out.println("  The configuration file is required and must be in the current directory.");
-        System.out.println("  It specifies the header file path and parsing options.");
+        System.out.println("  Example struct-parser.yaml:");
+        System.out.println("    headerFile: src/registers.h");
+        System.out.println("    includePaths:");
+        System.out.println("      - ./include");
+        System.out.println("      - ./drivers");
+        System.out.println("    gccCommand: gcc");
+        System.out.println("    gccRequired: true");
+        System.out.println("    output:");
+        System.out.println("      format: json");
+        System.out.println("      outputFile: output.json");
         System.out.println();
-        System.out.println("  Required fields:");
-        System.out.println("    headerFile: Path to the header file to parse");
-        System.out.println();
-        System.out.println("  Optional fields:");
-        System.out.println("    includePaths: List of include search paths");
-        System.out.println("    gccCommand:   GCC command to use (default: gcc)");
-        System.out.println("    output.format:     Output format (json)");
-        System.out.println("    output.outputFile: Output file path (default: stdout)");
-        System.out.println();
-        System.out.println("Examples:");
-        System.out.println("  # Generate default configuration");
-        System.out.println("  java -jar struct-parser.jar init");
-        System.out.println();
-        System.out.println("  # Edit struct-parser.yaml, then parse");
-        System.out.println("  java -jar struct-parser.jar parse");
-        System.out.println();
-        System.out.println("  # Check GCC availability");
-        System.out.println("  java -jar struct-parser.jar gcc-info");
+        System.out.println("Requirements:");
+        System.out.println("  - GCC must be installed and in PATH");
+        System.out.println("  - Configuration file must exist");
+        System.out.println("  - Header file path must be specified in configuration");
     }
 }
