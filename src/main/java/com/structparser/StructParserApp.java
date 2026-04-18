@@ -2,6 +2,7 @@ package com.structparser;
 
 import com.structparser.generator.JsonGenerator;
 import com.structparser.model.ParseResult;
+import com.structparser.parser.GccPreprocessor;
 import com.structparser.parser.StructParserService;
 
 import java.io.IOException;
@@ -10,7 +11,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 
 /**
- * 应用程序入口 - 支持文件解析和 #include
+ * 应用程序入口 - 支持 GCC 预处理和自定义 #include
  */
 public class StructParserApp {
     
@@ -29,11 +30,15 @@ public class StructParserApp {
                     printUsage();
                     System.exit(1);
                 }
-                parseFile(args[1], extractSearchPaths(args));
+                parseFile(args);
                 break;
                 
             case "example":
                 parseExample();
+                break;
+                
+            case "gcc-info":
+                printGccInfo();
                 break;
                 
             case "help":
@@ -43,27 +48,49 @@ public class StructParserApp {
         }
     }
     
-    /**
-     * 从命令行参数中提取搜索路径（-I 选项）
-     */
-    private static String[] extractSearchPaths(String[] args) {
-        var paths = new java.util.ArrayList<String>();
+    private static void parseFile(String[] args) {
+        String filePath = args[1];
+        boolean useGcc = false;
+        String gccCommand = "gcc";
+        var searchPaths = new java.util.ArrayList<String>();
+        
+        // 解析选项
         for (int i = 2; i < args.length; i++) {
-            if (args[i].equals("-I") && i + 1 < args.length) {
-                paths.add(args[i + 1]);
-                i++;
+            switch (args[i]) {
+                case "-I":
+                    if (i + 1 < args.length) {
+                        searchPaths.add(args[i + 1]);
+                        i++;
+                    }
+                    break;
+                case "--gcc":
+                    useGcc = true;
+                    break;
+                case "--gcc-cmd":
+                    if (i + 1 < args.length) {
+                        gccCommand = args[i + 1];
+                        i++;
+                    }
+                    break;
             }
         }
-        return paths.toArray(new String[0]);
-    }
-    
-    private static void parseFile(String filePath, String[] searchPaths) {
+        
         var service = new StructParserService();
         var generator = new JsonGenerator();
         
         // 添加搜索路径
         for (String path : searchPaths) {
             service.addSearchPath(path);
+        }
+        
+        // 配置 GCC 预处理
+        if (useGcc) {
+            if (!StructParserService.isGccAvailable()) {
+                System.err.println("Error: GCC is not available. Please install GCC or remove --gcc option.");
+                System.exit(1);
+            }
+            service.enableGccPreprocessing();
+            service.setGccCommand(gccCommand);
         }
         
         try {
@@ -79,7 +106,10 @@ public class StructParserApp {
             System.out.println(json);
             
             if (result.hasErrors()) {
-                System.err.println("\nParsing completed with errors.");
+                System.err.println("\nParsing completed with errors:");
+                for (String error : result.errors()) {
+                    System.err.println("  - " + error);
+                }
                 System.exit(2);
             }
             
@@ -132,6 +162,22 @@ public class StructParserApp {
         }
     }
     
+    private static void printGccInfo() {
+        System.out.println("GCC Preprocessor Information");
+        System.out.println("============================");
+        System.out.println();
+        
+        boolean available = GccPreprocessor.isGccAvailable();
+        System.out.println("GCC Available: " + (available ? "Yes" : "No"));
+        
+        if (available) {
+            System.out.println("GCC Version: " + GccPreprocessor.getGccVersion());
+        } else {
+            System.out.println("GCC is not found in PATH.");
+            System.out.println("Please install GCC to use --gcc option.");
+        }
+    }
+    
     private static void printUsage() {
         System.out.println("Struct Parser - C-style struct/union parser with #include support");
         System.out.println();
@@ -139,14 +185,23 @@ public class StructParserApp {
         System.out.println("  java -jar struct-parser.jar <command> [options]");
         System.out.println();
         System.out.println("Commands:");
-        System.out.println("  parse <file> [-I <path>]   Parse a struct definition file");
-        System.out.println("                             -I: Add include search path");
+        System.out.println("  parse <file> [options]     Parse a struct definition file");
+        System.out.println("    Options:");
+        System.out.println("      -I <path>              Add include search path");
+        System.out.println("      --gcc                  Use GCC preprocessor (gcc -E)");
+        System.out.println("      --gcc-cmd <command>    Use custom GCC command (e.g., arm-none-eabi-gcc)");
         System.out.println("  example                    Run with built-in example");
+        System.out.println("  gcc-info                   Check GCC availability");
         System.out.println("  help                       Show this help message");
         System.out.println();
         System.out.println("Examples:");
-        System.out.println("  java -jar struct-parser.jar parse input.h");
-        System.out.println("  java -jar struct-parser.jar parse input.h -I ./include -I /usr/local/include");
-        System.out.println("  java -jar struct-parser.jar example");
+        System.out.println("  # Parse with custom #include handler");
+        System.out.println("  java -jar struct-parser.jar parse input.h -I ./include");
+        System.out.println();
+        System.out.println("  # Parse with GCC preprocessing");
+        System.out.println("  java -jar struct-parser.jar parse input.h --gcc -I ./include");
+        System.out.println();
+        System.out.println("  # Use cross-compiler for preprocessing");
+        System.out.println("  java -jar struct-parser.jar parse input.h --gcc --gcc-cmd arm-none-eabi-gcc");
     }
 }
