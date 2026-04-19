@@ -141,9 +141,23 @@ public class ExampleIntegrationTest {
         assertEquals("A", refA.get("type").asText());
         assertEquals(8, refA.get("bits").asInt());
         assertEquals(0, refA.get("offset").asInt());
-        // 验证嵌套的 fields
+        
+        // 验证 ref_a 嵌套的 fields - 所有字段都要验证
         assertTrue(refA.has("fields"));
-        assertEquals(2, refA.get("fields").size());
+        JsonNode refAFields = refA.get("fields");
+        assertEquals(2, refAFields.size());
+        
+        JsonNode refA_fieldA = refAFields.get(0);
+        assertEquals("a", refA_fieldA.get("name").asText());
+        assertEquals("uint7", refA_fieldA.get("type").asText());
+        assertEquals(7, refA_fieldA.get("bits").asInt());
+        assertEquals(0, refA_fieldA.get("offset").asInt());
+        
+        JsonNode refA_fieldB = refAFields.get(1);
+        assertEquals("b", refA_fieldB.get("name").asText());
+        assertEquals("uint1", refA_fieldB.get("type").asText());
+        assertEquals(1, refA_fieldB.get("bits").asInt());
+        assertEquals(7, refA_fieldB.get("offset").asInt());
         
         // 验证具名引用 ref_b
         JsonNode refB = structC.get("fields").get(1);
@@ -151,9 +165,23 @@ public class ExampleIntegrationTest {
         assertEquals("B", refB.get("type").asText());
         assertEquals(8, refB.get("bits").asInt());
         assertEquals(8, refB.get("offset").asInt());
-        // 验证嵌套的 fields
+        
+        // 验证 ref_b 嵌套的 fields - 所有字段都要验证
         assertTrue(refB.has("fields"));
-        assertEquals(2, refB.get("fields").size());
+        JsonNode refBFields = refB.get("fields");
+        assertEquals(2, refBFields.size());
+        
+        JsonNode refB_fieldC = refBFields.get(0);
+        assertEquals("c", refB_fieldC.get("name").asText());
+        assertEquals("uint4", refB_fieldC.get("type").asText());
+        assertEquals(4, refB_fieldC.get("bits").asInt());
+        assertEquals(0, refB_fieldC.get("offset").asInt());
+        
+        JsonNode refB_fieldD = refBFields.get(1);
+        assertEquals("d", refB_fieldD.get("name").asText());
+        assertEquals("uint4", refB_fieldD.get("type").asText());
+        assertEquals(4, refB_fieldD.get("bits").asInt());
+        assertEquals(4, refB_fieldD.get("offset").asInt());
     }
     
     @Test
@@ -193,20 +221,24 @@ public class ExampleIntegrationTest {
         assertEquals(16, fieldG.get("bits").asInt());
         assertEquals(0, fieldG.get("offset").asInt());
         
-        // 验证 g 的嵌套 fields
+        // 验证 g 的嵌套 fields - 所有字段都要验证
         assertTrue(fieldG.has("fields"));
         JsonNode gFields = fieldG.get("fields");
         assertEquals(2, gFields.size());
+        assertFalse(gFields.get(0).has("fields")); // 普通字段没有嵌套
+        assertFalse(gFields.get(1).has("fields"));
         
-        assertEquals("e", gFields.get(0).get("name").asText());
-        assertEquals("uint10", gFields.get(0).get("type").asText());
-        assertEquals(10, gFields.get(0).get("bits").asInt());
-        assertEquals(0, gFields.get(0).get("offset").asInt());
+        JsonNode gFieldE = gFields.get(0);
+        assertEquals("e", gFieldE.get("name").asText());
+        assertEquals("uint10", gFieldE.get("type").asText());
+        assertEquals(10, gFieldE.get("bits").asInt());
+        assertEquals(0, gFieldE.get("offset").asInt());
         
-        assertEquals("f", gFields.get(1).get("name").asText());
-        assertEquals("uint6", gFields.get(1).get("type").asText());
-        assertEquals(6, gFields.get(1).get("bits").asInt());
-        assertEquals(10, gFields.get(1).get("offset").asInt());
+        JsonNode gFieldF = gFields.get(1);
+        assertEquals("f", gFieldF.get("name").asText());
+        assertEquals("uint6", gFieldF.get("type").asText());
+        assertEquals(6, gFieldF.get("bits").asInt());
+        assertEquals(10, gFieldF.get("offset").asInt());
         
         // 验证匿名 union 嵌套 j
         JsonNode fieldJ = structD.get("fields").get(1);
@@ -215,20 +247,30 @@ public class ExampleIntegrationTest {
         assertEquals(16, fieldJ.get("bits").asInt());
         assertEquals(16, fieldJ.get("offset").asInt());
         
-        // 验证 union 内的字段（offset 相对于 union，都是 0）
+        // 验证 union 内的字段（offset 相对于 union，从 0 开始）- 所有字段都要验证
         assertTrue(fieldJ.has("fields"));
         JsonNode jFields = fieldJ.get("fields");
         assertEquals(2, jFields.size());
+        assertFalse(jFields.get(0).has("fields")); // 普通字段没有嵌套
+        assertFalse(jFields.get(1).has("fields"));
         
-        assertEquals("h", jFields.get(0).get("name").asText());
-        assertEquals("uint16", jFields.get(0).get("type").asText());
-        assertEquals(16, jFields.get(0).get("bits").asInt());
-        assertEquals(0, jFields.get(0).get("offset").asInt());
+        JsonNode jFieldH = jFields.get(0);
+        assertEquals("h", jFieldH.get("name").asText());
+        assertEquals("uint16", jFieldH.get("type").asText());
+        assertEquals(16, jFieldH.get("bits").asInt());
+        assertEquals(0, jFieldH.get("offset").asInt());
         
-        assertEquals("i", jFields.get(1).get("name").asText());
-        assertEquals("uint16", jFields.get(1).get("type").asText());
-        assertEquals(16, jFields.get(1).get("bits").asInt());
-        assertEquals(0, jFields.get(1).get("offset").asInt());
+        JsonNode jFieldI = jFields.get(1);
+        assertEquals("i", jFieldI.get("name").asText());
+        assertEquals("uint16", jFieldI.get("type").asText());
+        assertEquals(16, jFieldI.get("bits").asInt());
+        assertEquals(0, jFieldI.get("offset").asInt());
+        
+        // 验证嵌套结构没有 anonymous 和 size_bits
+        assertFalse(fieldG.has("anonymous"));
+        assertFalse(fieldG.has("size_bits"));
+        assertFalse(fieldJ.has("anonymous"));
+        assertFalse(fieldJ.has("size_bits"));
     }
     
     @Test
