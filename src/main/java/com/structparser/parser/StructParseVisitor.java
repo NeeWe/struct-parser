@@ -76,6 +76,12 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
         if (ctx.structDeclaration() != null) return visit(ctx.structDeclaration());
         if (ctx.unionDeclaration() != null) return visit(ctx.unionDeclaration());
         
+        // 安全检查：确保有子节点
+        if (ctx.getChildCount() == 0) {
+            addError(ctx, "Invalid field definition");
+            return null;
+        }
+        
         String first = ctx.getChild(0).getText();
         
         // 匿名结构体: struct { ... } name;
