@@ -37,10 +37,12 @@ public class NamedReferenceTest {
         
         // 验证 JSON 包含嵌套的 fields
         assertTrue(json.contains("\"name\" : \"inner\""));
-        assertTrue(json.contains("\"type\" : \"struct\""));
+        assertTrue(json.contains("\"type\" : \"Inner\"")); // 具名引用
         assertTrue(json.contains("\"fields\" : ["));
         assertTrue(json.contains("\"name\" : \"a\""));
         assertTrue(json.contains("\"name\" : \"b\""));
+        // 不应该有 anonymous 属性
+        assertFalse(json.contains("\"anonymous\" :"));
         
         System.out.println("Named Struct Reference JSON:");
         System.out.println(json);
@@ -76,9 +78,11 @@ public class NamedReferenceTest {
         
         // 验证 JSON 包含嵌套的 union fields
         assertTrue(json.contains("\"name\" : \"data\""));
-        assertTrue(json.contains("\"type\" : \"union\""));
+        assertTrue(json.contains("\"type\" : \"DataUnion\""));
         assertTrue(json.contains("\"name\" : \"raw\""));
         assertTrue(json.contains("\"name\" : \"words\""));
+        // 不应该有 anonymous 属性
+        assertFalse(json.contains("\"anonymous\" :"));
         
         System.out.println("Named Union Reference JSON:");
         System.out.println(json);

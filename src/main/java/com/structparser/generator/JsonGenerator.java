@@ -65,10 +65,11 @@ public class JsonGenerator {
     
     private Map<String, Object> convertStruct(Struct struct) {
         var map = new LinkedHashMap<String, Object>();
-        map.put("name", struct.name());
-        map.put("type", "struct");
-        map.put("size_bits", struct.totalBits());
-        map.put("anonymous", struct.anonymous());
+        // 顶层结构的 name 为空字符串
+        map.put("name", "");
+        // 匿名结构 type 为空字符串，具名结构 type 为名称
+        map.put("type", struct.anonymous() ? "" : struct.name());
+        map.put("bits", struct.totalBits());
         map.put("fields", struct.fields().stream()
             .map(this::convertField)
             .toList());
@@ -77,10 +78,11 @@ public class JsonGenerator {
     
     private Map<String, Object> convertUnion(Union union) {
         var map = new LinkedHashMap<String, Object>();
-        map.put("name", union.name());
-        map.put("type", "union");
-        map.put("size_bits", union.totalBits());
-        map.put("anonymous", union.anonymous());
+        // 顶层联合体的 name 为空字符串
+        map.put("name", "");
+        // 匿名联合体 type 为空字符串，具名联合体 type 为名称
+        map.put("type", union.anonymous() ? "" : union.name());
+        map.put("bits", union.totalBits());
         map.put("fields", union.fields().stream()
             .map(this::convertField)
             .toList());
@@ -90,22 +92,34 @@ public class JsonGenerator {
     private Map<String, Object> convertField(Field field) {
         var map = new LinkedHashMap<String, Object>();
         map.put("name", field.name());
-        map.put("type", field.type().toString().toLowerCase());
-        map.put("bits", field.bitWidth());
-        map.put("offset", field.bitOffset());
         
-        // 如果有嵌套的 struct，添加其 fields
+        // 如果有嵌套的 struct
         if (field.nestedStruct() != null) {
-            map.put("fields", field.nestedStruct().fields().stream()
+            var nested = field.nestedStruct();
+            // 匿名结构 type 为空字符串，具名引用使用名称
+            map.put("type", nested.anonymous() ? "" : nested.name());
+            map.put("bits", field.bitWidth());
+            map.put("offset", field.bitOffset());
+            map.put("fields", nested.fields().stream()
                 .map(this::convertField)
                 .toList());
         }
-        
-        // 如果有嵌套的 union，添加其 fields
-        if (field.nestedUnion() != null) {
-            map.put("fields", field.nestedUnion().fields().stream()
+        // 如果有嵌套的 union
+        else if (field.nestedUnion() != null) {
+            var nested = field.nestedUnion();
+            // 匿名联合体 type 为空字符串，具名引用使用名称
+            map.put("type", nested.anonymous() ? "" : nested.name());
+            map.put("bits", field.bitWidth());
+            map.put("offset", field.bitOffset());
+            map.put("fields", nested.fields().stream()
                 .map(this::convertField)
                 .toList());
+        }
+        // 普通字段
+        else {
+            map.put("type", field.type().toString().toLowerCase());
+            map.put("bits", field.bitWidth());
+            map.put("offset", field.bitOffset());
         }
         
         return map;

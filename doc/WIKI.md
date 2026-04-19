@@ -131,10 +131,9 @@ struct Container {
 ```json
 {
   "structs": [{
-    "name": "ControlReg",
-    "type": "struct",
-    "size_bits": 32,
-    "anonymous": false,
+    "name": "",
+    "type": "ControlReg",
+    "bits": 32,
     "fields": [
       {"name": "enable",     "type": "uint1",  "bits": 1,  "offset": 0},
       {"name": "interrupt",  "type": "uint1",  "bits": 1,  "offset": 1},
@@ -157,15 +156,14 @@ struct Container {
 ```json
 {
   "structs": [{
-    "name": "Outer",
-    "type": "struct",
-    "size_bits": 40,
-    "anonymous": false,
+    "name": "",
+    "type": "Outer",
+    "bits": 40,
     "fields": [
       {"name": "header", "type": "uint8", "bits": 8, "offset": 0},
       {
         "name": "inner",
-        "type": "struct",
+        "type": "",
         "bits": 16,
         "offset": 8,
         "fields": [
@@ -197,24 +195,22 @@ struct Rectangle {
 {
   "structs": [
     {
-      "name": "Point",
-      "type": "struct",
-      "size_bits": 32,
-      "anonymous": false,
+      "name": "",
+      "type": "Point",
+      "bits": 32,
       "fields": [
         {"name": "x", "type": "uint16", "bits": 16, "offset": 0},
         {"name": "y", "type": "uint16", "bits": 16, "offset": 16}
       ]
     },
     {
-      "name": "Rectangle",
-      "type": "struct",
-      "size_bits": 64,
-      "anonymous": false,
+      "name": "",
+      "type": "Rectangle",
+      "bits": 64,
       "fields": [
         {
           "name": "topLeft",
-          "type": "struct",
+          "type": "Point",
           "bits": 32,
           "offset": 0,
           "fields": [
@@ -224,7 +220,7 @@ struct Rectangle {
         },
         {
           "name": "bottomRight",
-          "type": "struct",
+          "type": "Point",
           "bits": 32,
           "offset": 32,
           "fields": [
@@ -238,6 +234,11 @@ struct Rectangle {
   "unions": []
 }
 ```
+
+**Type 字段规则**：
+- **顶层结构/联合体**：`name` 为空字符串 `""`，`type` 为名称（如 `"Point"`）
+- **匿名嵌套**：`type` 为空字符串 `""`
+- **具名引用**：`type` 为具体的结构体/联合体名称（如 `"Point"`）
 
 ## 配置详解
 
