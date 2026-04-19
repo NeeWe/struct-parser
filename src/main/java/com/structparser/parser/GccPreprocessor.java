@@ -39,7 +39,6 @@ public class GccPreprocessor {
         command.add(gccCommand);
         command.add("-E");           // 仅预处理
         command.add("-P");           // 禁止行标记
-        command.add("-C");           // 保留注释
         command.add("-nostdinc");    // 不包含标准头文件路径
         
         // 添加自定义包含路径
