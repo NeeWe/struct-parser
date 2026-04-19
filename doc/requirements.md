@@ -113,15 +113,52 @@ struct DataReg {
 - 支持 `#include <file.h>` 形式（在搜索路径中查找）
 - 支持通过命令行 `-I` 选项添加搜索路径
 - 自动处理循环引用（通过文件去重机制）
+- **GCC 预处理不保留注释**（使用 `-E -P` 参数，简化输出）
 
 #### 2.3.2 其他预处理指令
-- `#define`、`#ifndef`、`#endif` 等指令会被保留在输出中（用于调试）
+- `#define`、`#ifndef`、`#endif` 等指令会被 GCC 预处理
 - 但不进行宏展开处理
 
 ### 2.4 注释支持
 - 支持C风格单行注释：`// 注释内容`
 - 支持C风格多行注释：`/* 注释内容 */`
-- 注释应被解析器正确忽略
+- **注意**：注释在 GCC 预处理阶段被移除，不会传递给解析器
+
+### 2.5 交叉引用限制
+**不支持交叉引用和前向引用**。当检测到以下情况时会报错：
+- **自引用**：结构体/联合体引用自身
+- **双向交叉引用**：A 引用 B，B 又引用 A
+- **多向循环引用**：A → B → C → A
+- **前向引用**：引用尚未定义的类型
+
+**错误示例：**
+```c
+// ❌ 不允许：交叉引用
+struct NodeA {
+    uint8 value;
+    NodeB next;  // 错误：NodeB 未定义
+};
+
+struct NodeB {
+    uint16 data;
+    NodeA prev;  // 错误：交叉引用
+};
+```
+
+**正确示例：**
+```c
+// ✅ 允许：先定义后引用
+struct Inner {
+    uint8 a;
+    uint8 b;
+};
+
+struct Outer {
+    uint8 header;
+    Inner inner;  // 正确：Inner 已定义
+    uint8 footer;
+};
+```
 
 ---
 
@@ -250,13 +287,17 @@ java -jar struct-parser.jar parse device.h -I ./include -I /usr/local/include
 - **语言**：Java 26
 - **解析器生成器**：ANTLR4
 - **构建工具**：Maven
-- **测试框架**：JUnit 5
+- **测试框架**：JUnit 5（112+ 单元测试）
 - **JDK特性**：Record类、Switch Expressions、Pattern Matching、var类型推断
+- **预处理**：GCC（`gcc -E -P`，不保留注释）
 
 ### 7.2 ANTLR4 实现要点
 - **词法规则（Lexer）**：定义关键字、标识符、数字、注释等token
 - **语法规则（Parser）**：定义struct/union的递归语法
 - **访问者模式（Visitor）**：遍历AST生成解析结果
+- **两遍扫描策略**：
+  - 第一遍：收集所有顶层结构体和联合体的名称
+  - 第二遍：解析字段并检测交叉引用
 - **监听器模式（Listener）**：可选，用于特定场景的事件处理
 
 ### 7.3 类似项目参考
@@ -273,7 +314,8 @@ src/
 │   ├── java/
 │   │   ├── parser/
 │   │   │   ├── StructParserService.java   # 解析服务入口
-│   │   │   ├── StructParseVisitor.java    # 自定义Visitor实现
+│   │   │   ├── StructParseVisitor.java    # 自定义Visitor实现（两遍扫描）
+│   │   │   ├── GccPreprocessor.java       # GCC预处理器（不保留注释）
 │   │   │   └── HeaderFileLoader.java      # 头文件加载器（支持#include）
 │   │   ├── model/
 │   │   │   ├── Struct.java          # 结构体模型（Record）
@@ -284,15 +326,22 @@ src/
 │   │   └── generator/
 │   │       └── JsonGenerator.java   # JSON输出生成器
 │   └── resources/
+│       └── include/                 # 示例头文件
+│           ├── base_types.h         # 基础类型定义
+│           └── device_types.h       # 设备类型（引用基础类型）
 └── test/
     ├── java/
     │   └── parser/
-    │       ├── StructParserServiceTest.java  # 单元测试
-    │       └── MultiFileParserTest.java      # 多文件解析测试
+    │       ├── StructParserServiceTest.java   # 单元测试
+    │       ├── MultiFileParserTest.java       # 多文件解析测试
+    │       ├── MultiFileReferenceTest.java    # 跨文件引用测试
+    │       └── CircularReferenceTest.java     # 交叉引用检测测试
     └── resources/
         └── headers/                 # 测试用头文件
             ├── types.h
             ├── device.h
+            ├── circular_a.h         # 循环引用测试
+            ├── circular_b.h
             └── include/
                 └── common.h
 ```
@@ -318,12 +367,18 @@ src/
 - [x] 循环引用检测与处理
 - [x] 命令行 `-I` 选项支持
 
-### v1.2 - 增强版本（规划中）
+### v1.2 - 当前版本（已完成）
+- [x] **交叉引用检测**：禁止结构体/联合体的交叉引用和前向引用
+- [x] **多文件引用场景**：支持 b.h #include a.h 并引用其中的类型
+- [x] **GCC 预处理优化**：不再保留注释，简化输出（`gcc -E -P`）
+- [x] **完善的测试覆盖**：112+ 单元测试，覆盖各种边界场景
+- [x] **两遍扫描策略**：第一遍收集名称，第二遍解析并检测交叉引用
+
+### v1.3 - 规划中
 - [ ] typedef完整支持
 - [ ] 数组类型支持（如 `uint8 data[4]`）
-- [ ] 前向引用支持（引用后定义的结构体）
 - [ ] 代码生成（C/Python/Rust）
-- [ ] 更完善的错误提示
+- [ ] 位字段对齐选项
 
 ### v2.0 - 高级版本（规划中）
 - [ ] 条件编译（#ifdef风格）
@@ -352,3 +407,4 @@ src/
 | v1.0 | 2026-04-18 | 初始版本 | - |
 | v1.1 | 2026-04-18 | 升级JDK 26，使用Record重构 | - |
 | v1.2 | 2026-04-18 | 添加多文件解析和#include支持 | - |
+| v1.3 | 2026-04-19 | 添加交叉引用检测、多文件引用场景、GCC预处理优化 | - |

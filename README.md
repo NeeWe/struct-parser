@@ -13,7 +13,8 @@ A C-style struct/union parser with ANTLR4 and GCC preprocessing, designed for em
 - **Nested Types**: Support nested and anonymous struct/union
 - **Custom Types**: uint1~uint32 data types with implicit bit-width
 - **No Byte Alignment**: Fields are packed tightly (bit-level layout)
-- **GCC Preprocessing**: Full C preprocessor support via `gcc -E`
+- **GCC Preprocessing**: Full C preprocessor support via `gcc -E -P` (comments removed)
+- **Circular Reference Detection**: Detect and reject self-references and cross-references
 - **Configuration-Driven**: YAML/JSON configuration for batch parsing
 - **Cross-File References**: Reference structs defined in other headers
 - **JSON Output**: Generate structured JSON with field offsets and sizes
@@ -167,21 +168,38 @@ output:
 Reference structs from other headers:
 
 ```c
-// types.h
-struct Reg32 {
-    uint32 value;
+// base_types.h
+struct Status {
+    uint8 code;
+    uint8 flags;
 };
 
-// device.h
-#include "types.h"
+union ConfigValue {
+    uint32 raw;
+    struct {
+        uint16 low;
+        uint16 high;
+    } parts;
+};
 
-struct DataReg {
-    struct Reg32 data;    // Reference struct from types.h
-    uint8 valid;
+// device_types.h
+#include "base_types.h"
+
+struct DeviceInfo {
+    Status status;      // Reference struct from base_types.h
+    uint32 device_id;
+};
+
+struct DeviceConfig {
+    uint8 mode;
+    ConfigValue config; // Reference union from base_types.h
+    uint16 timeout;
 };
 ```
 
 Place both files in directories listed in `includePaths`, and the parser will resolve cross-file references after GCC preprocessing.
+
+**Note**: Forward references and circular references are not allowed. Referenced types must be defined before use.
 
 ## Syntax
 
@@ -252,10 +270,13 @@ typedef struct {
 
 1. **Configuration Loading**: Reads `struct-parser.yaml` (or `.yml`, `.json`)
 2. **Header File Scanning**: Scans `includePaths` directories for `.h`, `.hpp`, `.hh`, `.hxx` files
-3. **GCC Preprocessing**: Runs `gcc -E -P -C -nostdinc` to preprocess headers
-4. **ANTLR4 Parsing**: Parses the preprocessed code using ANTLR4 grammar
-5. **Result Merging**: Merges results from all header files
-6. **JSON Generation**: Outputs structured JSON with field offsets and sizes
+3. **GCC Preprocessing**: Runs `gcc -E -P -nostdinc` to preprocess headers (comments removed)
+4. **Two-Pass Parsing**:
+   - First pass: Collect all top-level struct/union names
+   - Second pass: Parse fields and detect circular references
+5. **Circular Reference Detection**: Check for self-references, bidirectional, and multi-way cycles
+6. **Result Merging**: Merges results from all header files
+7. **JSON Generation**: Outputs structured JSON with field offsets and sizes
 
 ## Architecture
 
@@ -269,8 +290,8 @@ src/
 │   │   └── ConfigLoader.java        # YAML/JSON config loader
 │   ├── parser/
 │   │   ├── StructParserService.java # Main parsing service
-│   │   ├── StructParseVisitor.java  # AST visitor
-│   │   ├── GccPreprocessor.java     # GCC preprocessing
+│   │   ├── StructParseVisitor.java  # AST visitor (two-pass scanning)
+│   │   ├── GccPreprocessor.java     # GCC preprocessing (no comments)
 │   │   └── HeaderFileScanner.java   # Header file discovery
 │   ├── model/
 │   │   ├── Struct.java              # Struct model (Record)
@@ -286,6 +307,8 @@ src/
             ├── StructParserServiceTest.java
             ├── GccPreprocessorTest.java
             ├── MultiFileParserTest.java
+            ├── MultiFileReferenceTest.java    # Cross-file reference tests
+            ├── CircularReferenceTest.java     # Circular reference detection
             └── integration/
                 └── GccIntegrationTest.java
 ```
@@ -295,9 +318,9 @@ src/
 - **Java 26**: Modern Java with Record classes, Switch Expressions, and Pattern Matching
 - **ANTLR 4.13.1**: Parser generator for robust grammar parsing
 - **Maven 3.9+**: Build and dependency management
-- **JUnit 5**: Unit testing (84 tests)
+- **JUnit 5**: Unit testing (112+ tests)
 - **Jackson**: JSON and YAML processing
-- **GCC**: C preprocessor for header files
+- **GCC**: C preprocessor for header files (`gcc -E -P`)
 
 ## Development
 
@@ -323,16 +346,18 @@ mvn clean package
 ## Limitations
 
 - **Forward References**: Not supported (struct must be defined before use)
+- **Circular References**: Not allowed (self-reference, bidirectional, multi-way cycles)
 - **Arrays**: Array syntax (`uint8 arr[4]`) not supported, use expanded form
 - **Standard C Types**: Only `uint1~uint32` supported, no `int/char/float`
+- **Comments**: Removed during GCC preprocessing (`gcc -E -P`)
 
 ## Roadmap
 
-### v1.2 (Planned)
+### v1.3 (Planned)
 - [ ] Array type support (`uint8 data[4]`)
-- [ ] Forward reference support
 - [ ] Enhanced typedef semantics
 - [ ] Code generation (C/Python/Rust)
+- [ ] Bit-field alignment options
 
 ### v2.0 (Planned)
 - [ ] Conditional compilation (`#ifdef`)
