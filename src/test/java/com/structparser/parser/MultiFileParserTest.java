@@ -72,17 +72,12 @@ public class MultiFileParserTest {
         Path file = TEST_RESOURCES.resolve("circular_a.h");
         ParseResult result = parser.parseFile(file);
         
-        // 循环引用会导致前向引用问题
-        // StructA 引用 StructB，但 StructB 又引用 StructA
-        // 这是一个设计问题，当前实现会报告未定义错误
-        
-        // 至少应该解析出一个结构体
-        assertTrue(result.structs().size() >= 1);
-        
-        // 应该有关于未定义结构体的错误
-        if (result.hasErrors()) {
-            assertTrue(result.errors().stream().anyMatch(e -> e.contains("Undefined")));
-        }
+        // 循环引用会导致前向引用问题或交叉引用错误
+        assertTrue(result.hasErrors(), "Circular reference should cause errors");
+        // 可能报 "Undefined struct" 或 "Circular reference" 或 "Forward reference" 错误
+        assertTrue(result.errors().stream().anyMatch(e -> 
+            e.contains("Undefined") || e.contains("Circular reference") || e.contains("Forward reference")), 
+            "Should detect circular/forward reference or undefined: " + result.errors());
     }
     
     @Test

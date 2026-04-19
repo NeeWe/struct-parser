@@ -16,6 +16,10 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
     private final Map<String, String> typedefs = new HashMap<>();
     private final List<String> errors = new ArrayList<>();
     private final Deque<Context> stack = new ArrayDeque<>();
+    // 用于检测交叉引用：记录正在解析的结构体名称
+    private final Set<String> currentlyParsing = new HashSet<>();
+    // 所有已声明的顶层结构体和联合体名称（用于区分未定义和交叉引用）
+    private final Set<String> declaredNames = new HashSet<>();
     
     public ParseResult getResult() {
         errors.forEach(e -> result = result.withError(e));
@@ -24,8 +28,33 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
     
     @Override
     public Object visitProgram(StructParserParser.ProgramContext ctx) {
+        // 第一遍：收集所有顶层结构体和联合体的名称
+        collectDeclaredNames(ctx.declaration());
+        
+        // 第二遍：正常解析
         ctx.declaration().forEach(this::visit);
         return result;
+    }
+    
+    /**
+     * 第一遍扫描：收集所有顶层结构体和联合体的名称
+     */
+    private void collectDeclaredNames(List<StructParserParser.DeclarationContext> declarations) {
+        for (var decl : declarations) {
+            if (decl.structDeclaration() != null) {
+                String name = decl.structDeclaration().Identifier() != null ? 
+                    decl.structDeclaration().Identifier().getText() : null;
+                if (name != null) {
+                    declaredNames.add(name);
+                }
+            } else if (decl.unionDeclaration() != null) {
+                String name = decl.unionDeclaration().Identifier() != null ? 
+                    decl.unionDeclaration().Identifier().getText() : null;
+                if (name != null) {
+                    declaredNames.add(name);
+                }
+            }
+        }
     }
     
     @Override
@@ -37,8 +66,18 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
             return null;
         }
         
+        // 标记当前正在解析的结构体
+        if (name != null) {
+            currentlyParsing.add(name);
+        }
+        
         var fields = parseFields(ctx.fieldList());
         var struct = new Struct(name, fields, name == null);
+        
+        // 移除标记
+        if (name != null) {
+            currentlyParsing.remove(name);
+        }
         
         if (stack.isEmpty()) {
             result = result.withStruct(struct);
@@ -58,8 +97,18 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
             return null;
         }
         
+        // 标记当前正在解析的联合体
+        if (name != null) {
+            currentlyParsing.add(name);
+        }
+        
         var fields = parseUnionFields(ctx.fieldList());
         var union = new Union(name, fields, name == null);
+        
+        // 移除标记
+        if (name != null) {
+            currentlyParsing.remove(name);
+        }
         
         if (stack.isEmpty()) {
             result = result.withUnion(union);
@@ -108,8 +157,15 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
         if (first.equals("struct") && ctx.Identifier() != null) {
             String structName = ctx.Identifier().getText();
             String fieldName = ctx.fieldName().getText();
+            
             var ref = result.getStructByName(structName);
             if (ref != null) {
+                // 检查交叉引用：如果该结构体正在解析中
+                if (currentlyParsing.contains(structName)) {
+                    addError(ctx, "Circular reference detected: " + structName);
+                    addField(fieldName, Type.STRUCT, 0);
+                    return null;
+                }
                 // 保留嵌套的 struct 信息
                 addNestedField(fieldName, Type.STRUCT, ref.totalBits(), ref, null);
             } else {
@@ -123,8 +179,15 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
         if (first.equals("union") && ctx.Identifier() != null) {
             String unionName = ctx.Identifier().getText();
             String fieldName = ctx.fieldName().getText();
+            
             var ref = result.getUnionByName(unionName);
             if (ref != null) {
+                // 检查交叉引用：如果该联合体正在解析中
+                if (currentlyParsing.contains(unionName)) {
+                    addError(ctx, "Circular reference detected: " + unionName);
+                    addField(fieldName, Type.UNION, 0);
+                    return null;
+                }
                 // 保留嵌套的 union 信息
                 addNestedField(fieldName, Type.UNION, ref.totalBits(), null, ref);
             } else {
@@ -142,6 +205,13 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
                 String typeName = ctx.typeSpecifier().Identifier().getText();
                 String fieldName = ctx.fieldName().getText();
                 
+                // 检查交叉引用：如果该类型已声明且正在解析中
+                if (declaredNames.contains(typeName) && currentlyParsing.contains(typeName)) {
+                    addError(ctx, "Circular reference detected: " + typeName);
+                    addField(fieldName, Type.CUSTOM, 0);
+                    return null;
+                }
+                
                 // 先尝试查找结构体
                 var structRef = result.getStructByName(typeName);
                 if (structRef != null) {
@@ -153,6 +223,13 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
                 var unionRef = result.getUnionByName(typeName);
                 if (unionRef != null) {
                     addNestedField(fieldName, Type.UNION, unionRef.totalBits(), null, unionRef);
+                    return null;
+                }
+                
+                // 如果类型已声明但未找到，说明是前向引用（不允许）
+                if (declaredNames.contains(typeName)) {
+                    addError(ctx, "Forward reference not allowed: " + typeName);
+                    addField(fieldName, Type.CUSTOM, 0);
                     return null;
                 }
                 
