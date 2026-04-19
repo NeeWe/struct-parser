@@ -128,6 +128,33 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
             return null;
         }
         
+        // DSL语法：直接使用类型名称引用结构体/联合体 (例如: A ref_a;)
+        // 注意：需要检查 typeSpecifier 是否是 Identifier（而不是 uintN）
+        if (!first.equals("struct") && !first.equals("union") && ctx.typeSpecifier() != null) {
+            // 检查 typeSpecifier 是否是 Identifier 类型
+            if (ctx.typeSpecifier().Identifier() != null) {
+                String typeName = ctx.typeSpecifier().Identifier().getText();
+                String fieldName = ctx.fieldName().getText();
+                
+                // 先尝试查找结构体
+                var structRef = result.getStructByName(typeName);
+                if (structRef != null) {
+                    addNestedField(fieldName, Type.STRUCT, structRef.totalBits(), structRef, null);
+                    return null;
+                }
+                
+                // 再尝试查找联合体
+                var unionRef = result.getUnionByName(typeName);
+                if (unionRef != null) {
+                    addNestedField(fieldName, Type.UNION, unionRef.totalBits(), null, unionRef);
+                    return null;
+                }
+                
+                // 如果都找不到，作为普通字段处理（可能是 typedef 或未知类型）
+                // 继续执行下面的普通字段处理逻辑
+            }
+        }
+        
         // 普通字段
         if (ctx.typeSpecifier() != null) {
             var type = parseType(ctx.typeSpecifier());
@@ -164,8 +191,9 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
         var result = new ArrayList<Field>();
         int offset = 0;
         for (Field f : context.fields) {
-            // 保留嵌套的 struct/union 信息
-            result.add(new Field(f.name(), f.type(), f.bitWidth(), offset, f.nestedStruct(), f.nestedUnion()));
+            // 为字段设置偏移量，并递归处理嵌套结构
+            Field updatedField = setFieldOffset(f, offset);
+            result.add(updatedField);
             offset += f.bitWidth();
         }
         return result;
@@ -178,7 +206,7 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
         ctx.field().forEach(this::visit);
         var context = stack.pop();
         
-        // 联合体偏移量都为0
+        // Union 内的字段在创建时 offset 为 0，后续会在父级结构中更新
         return context.fields.stream()
             .map(f -> new Field(f.name(), f.type(), f.bitWidth(), 0, f.nestedStruct(), f.nestedUnion()))
             .toList();
@@ -200,6 +228,48 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
                 stack.peek().fields.add(Field.of(name, type, width));
             }
         }
+    }
+    
+    /**
+     * 为字段设置绝对偏移量，并递归更新嵌套结构的偏移量
+     */
+    private Field setFieldOffset(Field field, int offset) {
+        if (field.nestedStruct() != null) {
+            // 递归更新嵌套 struct 内部所有字段的偏移量
+            Struct updatedStruct = updateStructOffsets(field.nestedStruct(), offset);
+            return new Field(field.name(), field.type(), field.bitWidth(), offset, updatedStruct, null);
+        } else if (field.nestedUnion() != null) {
+            // 递归更新嵌套 union 内部所有字段的偏移量
+            Union updatedUnion = updateUnionOffsets(field.nestedUnion(), offset);
+            return new Field(field.name(), field.type(), field.bitWidth(), offset, null, updatedUnion);
+        } else {
+            // 普通字段
+            return new Field(field.name(), field.type(), field.bitWidth(), offset, null, null);
+        }
+    }
+    
+    /**
+     * 递归更新 struct 内部所有字段的绝对偏移量
+     */
+    private Struct updateStructOffsets(Struct struct, int baseOffset) {
+        List<Field> updatedFields = new ArrayList<>();
+        int currentOffset = baseOffset;
+        for (Field field : struct.fields()) {
+            Field updatedField = setFieldOffset(field, currentOffset);
+            updatedFields.add(updatedField);
+            currentOffset += field.bitWidth();
+        }
+        return new Struct(struct.name(), updatedFields, struct.anonymous());
+    }
+    
+    /**
+     * 递归更新 union 内部所有字段的绝对偏移量（union 内所有字段共享相同的基偏移量）
+     */
+    private Union updateUnionOffsets(Union union, int baseOffset) {
+        List<Field> updatedFields = union.fields().stream()
+            .map(field -> setFieldOffset(field, baseOffset))
+            .toList();
+        return new Union(union.name(), updatedFields, union.anonymous());
     }
     
     private Type parseType(StructParserParser.TypeSpecifierContext ctx) {

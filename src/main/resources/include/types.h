@@ -2,25 +2,30 @@
 #ifndef TYPES_H
 #define TYPES_H
 
-// 布尔类型
-struct BoolField {
-    uint1 value;
-    uint7 reserved;
+struct A {
+  uint7 a;
+  uint1 b;
 };
 
-// 8位寄存器
-struct Reg8 {
-    uint8 value;
+struct B {
+  uint4 c;
+  uint4 d;
 };
 
-// 16位寄存器
-struct Reg16 {
-    uint16 value;
+struct C {
+  A ref_a;
+  B ref_b;
 };
 
-// 32位寄存器
-struct Reg32 {
-    uint32 value;
+struct D {
+  struct {
+    uint10 e;
+    uint6 f;
+  } g;
+  union {
+    uint16 h;
+    uint16 i;
+  } j;
 };
 
 #endif // TYPES_H

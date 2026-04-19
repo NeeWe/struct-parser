@@ -30,3 +30,5 @@ Thumbs.db
 # ANTLR4 generated (keep only g4 files)
 *.tokens
 *.interp
+
+output
