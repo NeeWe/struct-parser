@@ -94,7 +94,19 @@ public class GccPreprocessor {
         var command = new ArrayList<>(preprocessCommand);
         
         // 移除可能存在的输入文件（如果有的话）
-        command.removeIf(arg -> arg.endsWith(".c") || arg.endsWith(".h") || arg.endsWith(".cpp"));
+        // 注意：不移除 -include 或 -imacros 参数后面的文件
+        for (int i = 0; i < command.size(); i++) {
+            String arg = command.get(i);
+            // 如果是 -include 或 -imacros 的下一个参数，跳过
+            if (i > 0 && ("-include".equals(command.get(i - 1)) || "-imacros".equals(command.get(i - 1)))) {
+                continue;
+            }
+            // 移除独立的 .c/.h/.cpp 文件
+            if (arg.endsWith(".c") || arg.endsWith(".h") || arg.endsWith(".cpp")) {
+                command.remove(i);
+                i--; // 调整索引
+            }
+        }
         
         // 添加当前文件
         command.add(file.toAbsolutePath().toString());
