@@ -210,16 +210,8 @@ public class GccPreprocessorTest {
             """);
         
         // 创建编译配置文件
-        Path compileConfig = includeDir.resolve("compile_commands.json");
-        Files.writeString(compileConfig, """
-            [
-              {
-                "directory": "%s",
-                "command": "gcc -E -P -I%s main.h",
-                "file": "main.h"
-              }
-            ]
-            """.formatted(includeDir.toString(), includeDir.toString()));
+        Path compileConfig = includeDir.resolve("command.txt");
+        Files.writeString(compileConfig, "gcc -E -P -I%s".formatted(includeDir.toString()));
         
         preprocessor.loadCompileConfig(compileConfig);
         var result = preprocessor.preprocess(mainHeader);
@@ -254,16 +246,8 @@ public class GccPreprocessorTest {
             """);
         
         // 创建编译配置文件
-        Path compileConfig = includeDir.resolve("compile_commands.json");
-        Files.writeString(compileConfig, """
-            [
-              {
-                "directory": "%s",
-                "command": "gcc -E -P -I%s nested.h",
-                "file": "nested.h"
-              }
-            ]
-            """.formatted(includeDir.toString(), includeDir.toString()));
+        Path compileConfig = includeDir.resolve("command.txt");
+        Files.writeString(compileConfig, "gcc -E -P -I%s".formatted(includeDir.toString()));
         
         preprocessor.loadCompileConfig(compileConfig);
         var result = preprocessor.preprocess(mainHeader);

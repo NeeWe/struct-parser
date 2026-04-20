@@ -6,8 +6,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -19,77 +17,19 @@ public class GccPreprocessor {
     
     /**
      * 从编译配置文件加载预处理命令
-     * 支持多种格式：
-     * 1. compile_commands.json (JSON Compilation Database)
-     * 2. Makefile (提取 CFLAGS/CPPFLAGS)
-     * 3. 直接指定 gcc 命令和参数
+     * 仅支持直接命令文件格式（类C DSL的gcc命令）
      */
     public GccPreprocessor loadCompileConfig(Path configFile) throws IOException {
         String content = Files.readString(configFile);
-        String fileName = configFile.getFileName().toString().toLowerCase();
         
-        if (fileName.endsWith(".json")) {
-            // JSON Compilation Database 格式
-            preprocessCommand = parseJsonCompilationDatabase(content);
-        } else if (fileName.endsWith(".mk") || fileName.equals("makefile") || fileName.equals("Makefile")) {
-            // Makefile 格式
-            preprocessCommand = parseMakefile(content);
-        } else {
-            // 假设是直接命令
-            preprocessCommand = parseDirectCommand(content);
-        }
+        // 解析直接命令
+        preprocessCommand = parseDirectCommand(content);
         
         if (preprocessCommand == null || preprocessCommand.isEmpty()) {
             throw new IOException("Failed to extract preprocessing command from: " + configFile);
         }
         
         return this;
-    }
-    
-    /**
-     * 解析 JSON Compilation Database
-     */
-    private List<String> parseJsonCompilationDatabase(String jsonContent) {
-        // 简化实现：查找第一个条目的 command 字段
-        // 实际应该使用 JSON 解析器
-        Pattern pattern = Pattern.compile("\"command\"\\s*:\\s*\"([^\"]+)\"");
-        Matcher matcher = pattern.matcher(jsonContent);
-        
-        if (matcher.find()) {
-            String command = matcher.group(1);
-            return buildPreprocessCommand(command);
-        }
-        
-        return null;
-    }
-    
-    /**
-     * 解析 Makefile，提取 CFLAGS/CPPFLAGS
-     */
-    private List<String> parseMakefile(String makefileContent) {
-        // 查找 CFLAGS 或 CPPFLAGS
-        Pattern cflagsPattern = Pattern.compile("CFLAGS\\s*[+]?=\\s*(.+)", Pattern.MULTILINE);
-        Pattern cppflagsPattern = Pattern.compile("CPPFLAGS\\s*[+]?=\\s*(.+)", Pattern.MULTILINE);
-        
-        Matcher cflagsMatcher = cflagsPattern.matcher(makefileContent);
-        Matcher cppflagsMatcher = cppflagsPattern.matcher(makefileContent);
-        
-        StringBuilder flags = new StringBuilder();
-        
-        if (cppflagsMatcher.find()) {
-            flags.append(cppflagsMatcher.group(1).trim()).append(" ");
-        }
-        
-        if (cflagsMatcher.find()) {
-            flags.append(cflagsMatcher.group(1).trim());
-        }
-        
-        if (flags.length() > 0) {
-            String command = "gcc " + flags.toString();
-            return buildPreprocessCommand(command);
-        }
-        
-        return null;
     }
     
     /**
