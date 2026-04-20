@@ -37,14 +37,16 @@ mvn clean package
 Create `struct-parser.yaml` in your working directory:
 
 ```yaml
-includePaths:
-  - ./include
-  - ./drivers
-gccCommand: gcc
-gccRequired: true
+compileConfigFile: ./command.txt
 output:
   format: json
   outputFile: output.json
+```
+
+The `compileConfigFile` should contain a simple gcc command:
+
+```txt
+gcc -E -P -I./include -I./drivers
 ```
 
 ### Run
@@ -122,29 +124,30 @@ The tool requires a configuration file (`struct-parser.yaml`, `struct-parser.yml
 
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
-| `includePaths` | Yes | - | List of directories to scan for header files |
-| `gccCommand` | No | `gcc` | GCC command to use for preprocessing |
-| `gccRequired` | Yes | `true` | Must be `true` (GCC preprocessing is mandatory) |
+| `compileConfigFile` | Yes | - | Path to compile config file (contains gcc command) |
 | `output.format` | No | `json` | Output format (currently only `json`) |
 | `output.outputFile` | No | stdout | Output file path (if not specified, prints to stdout) |
+
+### Compile Config File Format
+
+The compile config file is a simple text file containing a gcc preprocessing command:
+
+```txt
+gcc -E -P -I./include -I./drivers -I./hal
+```
+
+**Note**: Only direct command format is supported (no JSON Compilation Database or Makefile).
 
 ### Example Configurations
 
 **Basic YAML:**
 ```yaml
-includePaths:
-  - ./include
-  - ./drivers
-gccCommand: gcc
-gccRequired: true
+compileConfigFile: ./command.txt
 ```
 
 **With output file:**
 ```yaml
-includePaths:
-  - ./include
-gccCommand: arm-none-eabi-gcc
-gccRequired: true
+compileConfigFile: ./build/command.txt
 output:
   format: json
   outputFile: output/structs.json
@@ -153,14 +156,17 @@ output:
 **JSON format:**
 ```json
 {
-  "includePaths": ["./include", "./drivers"],
-  "gccCommand": "gcc",
-  "gccRequired": true,
+  "compileConfigFile": "./command.txt",
   "output": {
     "format": "json",
     "outputFile": "output.json"
   }
 }
+```
+
+**Example command.txt:**
+```txt
+gcc -E -P -I./include -nostdinc
 ```
 
 ## Multi-File Support
@@ -268,9 +274,9 @@ typedef struct {
 
 ## How It Works
 
-1. **Configuration Loading**: Reads `struct-parser.yaml` (or `.yml`, `.json`)
-2. **Header File Scanning**: Scans `includePaths` directories for `.h`, `.hpp`, `.hh`, `.hxx` files
-3. **GCC Preprocessing**: Runs `gcc -E -P -nostdinc` to preprocess headers (comments removed)
+1. **Configuration Loading**: Reads `struct-parser.yaml` (or `.yml`, `.json`) and loads compile config
+2. **Header File Scanning**: Scans directories from compile config for header files
+3. **GCC Preprocessing**: Runs gcc command from compile config to preprocess headers (comments removed)
 4. **Two-Pass Parsing**:
    - First pass: Collect all top-level struct/union names
    - Second pass: Parse fields and detect circular references
@@ -291,7 +297,7 @@ src/
 │   ├── parser/
 │   │   ├── StructParserService.java # Main parsing service
 │   │   ├── StructParseVisitor.java  # AST visitor (two-pass scanning)
-│   │   ├── GccPreprocessor.java     # GCC preprocessing (no comments)
+│   │   ├── GccPreprocessor.java     # GCC preprocessing (direct command only)
 │   │   └── HeaderFileScanner.java   # Header file discovery
 │   ├── model/
 │   │   ├── Struct.java              # Struct model (Record)

@@ -25,14 +25,16 @@ java -jar target/struct-parser-1.0.0-jar-with-dependencies.jar
 创建 `struct-parser.yaml`：
 
 ```yaml
-includePaths:
-  - ./include
-  - ./drivers
-gccCommand: gcc
-gccRequired: true
+compileConfigFile: ./command.txt
 output:
   format: json
   outputFile: output.json
+```
+
+创建编译配置文件 `command.txt`：
+
+```txt
+gcc -E -P -I./include -I./drivers
 ```
 
 ### 运行
@@ -288,32 +290,21 @@ struct Rectangle {
 
 ## 配置详解
 
-### includePaths
+### compileConfigFile
 
-指定要扫描的头文件目录（不递归子目录）：
-
-```yaml
-includePaths:
-  - ./include      # 扫描 ./include/ 下的 .h, .hpp 文件
-  - ./drivers      # 扫描 ./drivers/ 下的 .h, .hpp 文件
-```
-
-### gccCommand
-
-指定 GCC 命令，默认使用 `gcc`：
+指定编译配置文件路径，该文件包含 gcc 预处理命令：
 
 ```yaml
-gccCommand: gcc              # 系统默认 GCC
-gccCommand: arm-none-eabi-gcc  # 交叉编译器
+compileConfigFile: ./command.txt
 ```
 
-### gccRequired
+**编译配置文件格式**（直接命令文件）：
 
-强制使用 GCC 预处理，必须为 `true`：
-
-```yaml
-gccRequired: true
+```txt
+gcc -E -P -I./include -I./drivers -nostdinc
 ```
+
+**注意**：仅支持直接命令文件格式，不支持 JSON Compilation Database 或 Makefile。
 
 ### output
 
@@ -327,9 +318,9 @@ output:
 
 ## 工作原理
 
-1. **配置加载**：读取 `struct-parser.yaml`
-2. **头文件扫描**：扫描 `includePaths` 中的 `.h`, `.hpp`, `.hh`, `.hxx` 文件
-3. **GCC 预处理**：使用 `gcc -E -P` 进行标准 C 预处理（不保留注释）
+1. **配置加载**：读取 `struct-parser.yaml` 并加载编译配置
+2. **头文件扫描**：从编译配置文件所在目录扫描头文件
+3. **GCC 预处理**：使用编译配置文件中的 gcc 命令进行预处理（不保留注释）
 4. **两遍扫描解析**：
    - 第一遍：收集所有顶层结构体和联合体的名称
    - 第二遍：解析字段并检测交叉引用

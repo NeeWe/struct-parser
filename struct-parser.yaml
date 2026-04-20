@@ -2,10 +2,8 @@
 # 程序将从 compileConfigFile 中提取编译命令并扫描头文件
 
 # 必需：编译配置文件路径
-# 支持以下格式：
-# 1. compile_commands.json (JSON Compilation Database)
-# 2. Makefile (提取 CFLAGS/CPPFLAGS)
-# 3. 直接命令文件 (包含完整的 gcc 命令和参数)
+# 仅支持直接命令文件格式（类C DSL场景）
+# 示例内容: gcc -E -P -I./include -I./drivers
 compileConfigFile: ./src/main/resources/include/command.txt
 
 # 可选：输出配置
