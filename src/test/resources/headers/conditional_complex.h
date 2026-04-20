@@ -1,5 +1,5 @@
-// Test case: Multiple conditional compilation with combined conditions
-// This tests complex #if expressions with &&, ||, defined()
+// Test case: Complex conditional compilation with multiple conditions
+// This file tests complex #if expressions with &&, ||, defined()
 
 #if defined(HIGH_PERF) && defined(ENABLE_CACHE)
 struct CacheConfig {
@@ -33,7 +33,7 @@ struct BasicConfig {
     #endif
 #endif
 
-// Always present
+// Always present regardless of conditions
 struct GlobalSettings {
     uint8 version;
     uint8 checksum;

@@ -1,6 +1,5 @@
-// Test case: Simple conditional compilation
-// After preprocessing with FEATURE_A defined, only FeatureAConfig should exist
-// After preprocessing without FEATURE_A, only FeatureBConfig should exist
+// Test case: Simple conditional compilation with #ifdef
+// This file contains preprocessor directives that will be handled by GCC
 
 #ifdef FEATURE_A
 struct FeatureAConfig {
@@ -15,7 +14,7 @@ struct FeatureBConfig {
 };
 #endif
 
-// This struct always exists
+// This struct always exists regardless of conditions
 struct CommonConfig {
     uint8 id;
     uint8 flags;
