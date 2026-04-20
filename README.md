@@ -14,9 +14,12 @@ A C-style struct/union parser with ANTLR4 and GCC preprocessing, designed for em
 - **Custom Types**: uint1~uint32 data types with implicit bit-width
 - **No Byte Alignment**: Fields are packed tightly (bit-level layout)
 - **GCC Preprocessing**: Full C preprocessor support via `gcc -E -P` (comments removed)
+- **Conditional Compilation**: Support `#ifdef`, `#if`, `-D`, `-include`, `-imacros`
+- **Syntax Tolerance**: Ignore unrecognized C syntax (functions, enums, etc.)
 - **Circular Reference Detection**: Detect and reject self-references and cross-references
 - **Configuration-Driven**: YAML/JSON configuration for batch parsing
 - **Cross-File References**: Reference structs defined in other headers
+- **Logging System**: SLF4J + Logback with separate log files for errors and preprocessed content
 - **JSON Output**: Generate structured JSON with field offsets and sizes
 
 ## Quick Start
@@ -136,6 +139,12 @@ The compile config file is a simple text file containing a gcc preprocessing com
 gcc -E -P -I./include -I./drivers -I./hal
 ```
 
+**Supported GCC Options:**
+- `-Dmacro[=defn]`: Define macros on command line
+- `-include file`: Include file before processing input
+- `-imacros file`: Include macro definitions (not output to preprocessed result)
+- `-Idir`: Add include directory
+
 **Note**: Only direct command format is supported (no JSON Compilation Database or Makefile).
 
 ### Example Configurations
@@ -168,6 +177,96 @@ output:
 ```txt
 gcc -E -P -I./include -nostdinc
 ```
+
+## Conditional Compilation
+
+The parser fully supports C conditional compilation through GCC preprocessing:
+
+### Command-Line Macros
+
+```txt
+gcc -E -P -I. -DFEATURE_A -DHIGH_PERF
+```
+
+### External Macro Files
+
+Create a header file with macro definitions:
+
+```c
+// features.h
+#define FEATURE_A
+#define HIGH_PERF
+#define ENABLE_CACHE
+```
+
+Reference it in your compile config:
+
+```txt
+gcc -E -P -I. -include features.h
+```
+
+Or use `-imacros` (macros won't appear in preprocessed output):
+
+```txt
+gcc -E -P -I. -imacros features.h
+```
+
+### Mixed Usage
+
+Combine `-D` and `-include`:
+
+```txt
+gcc -E -P -I. -include base_features.h -DENABLE_CACHE
+```
+
+### Example
+
+```c
+#ifdef FEATURE_A
+struct FeatureAConfig {
+    uint8 mode;
+    uint16 timeout;
+};
+#else
+struct FeatureBConfig {
+    uint8 level;
+    uint24 value;
+};
+#endif
+```
+
+With `gcc -E -P -I. -DFEATURE_A`, only `FeatureAConfig` will be parsed.
+Without `-DFEATURE_A`, only `FeatureBConfig` will be parsed.
+
+## Syntax Tolerance
+
+The parser is designed to handle real-world header files that may contain various C syntax beyond struct/union definitions. After GCC preprocessing, the parser will:
+
+- **Extract** struct and union definitions
+- **Ignore** function declarations, enum definitions, constants, etc.
+- **Skip** any unrecognized syntax gracefully
+
+This means you can parse complex header files without needing to clean them up first.
+
+### Example
+
+```c
+// This file contains mixed C syntax
+void init_device(void);           // Function declaration (ignored)
+enum Color { RED, GREEN, BLUE };  // Enum (ignored)
+const int MAX_SIZE = 100;         // Constant (ignored)
+
+struct ControlReg {               // Struct (parsed!)
+    uint8 mode;
+    uint16 timeout;
+};
+
+static inline void helper(void) { // Function (ignored)
+    // do something
+}
+```
+
+Only `ControlReg` will be extracted from this file.
 
 ## Multi-File Support
 
@@ -276,20 +375,25 @@ typedef struct {
 
 1. **Configuration Loading**: Reads `struct-parser.yaml` (or `.yml`, `.json`) and loads compile config
 2. **Header File Scanning**: Scans directories from compile config for header files
-3. **GCC Preprocessing**: Runs gcc command from compile config to preprocess headers (comments removed)
-4. **Two-Pass Parsing**:
+3. **GCC Preprocessing**: Runs gcc command from compile config to preprocess headers
+   - Handles `#ifdef`, `#if`, `#include` directives
+   - Applies `-D`, `-include`, `-imacros` options
+   - Removes comments (`gcc -E -P`)
+4. **Syntax Tolerance**: Parser ignores unrecognized C syntax (functions, enums, etc.)
+5. **Two-Pass Parsing**:
    - First pass: Collect all top-level struct/union names
    - Second pass: Parse fields and detect circular references
-5. **Circular Reference Detection**: Check for self-references, bidirectional, and multi-way cycles
-6. **Result Merging**: Merges results from all header files
-7. **JSON Generation**: Outputs structured JSON with field offsets and sizes
+6. **Circular Reference Detection**: Check for self-references, bidirectional, and multi-way cycles
+7. **Result Merging**: Merges results from all header files
+8. **JSON Generation**: Outputs structured JSON with field offsets and sizes
+9. **Logging**: Records errors to `logs/struct-parser.log` and preprocessed content to `logs/preprocessed.log`
 
 ## Architecture
 
 ```
 src/
 ├── main/antlr4/
-│   └── StructParser.g4              # ANTLR4 grammar
+│   └── StructParser.g4              # ANTLR4 grammar (with syntax tolerance)
 ├── main/java/
 │   ├── config/
 │   │   ├── ParserConfig.java        # Configuration model (Record)
@@ -297,7 +401,7 @@ src/
 │   ├── parser/
 │   │   ├── StructParserService.java # Main parsing service
 │   │   ├── StructParseVisitor.java  # AST visitor (two-pass scanning)
-│   │   ├── GccPreprocessor.java     # GCC preprocessing (direct command only)
+│   │   ├── GccPreprocessor.java     # GCC preprocessing (-D, -include, -imacros)
 │   │   └── HeaderFileScanner.java   # Header file discovery
 │   ├── model/
 │   │   ├── Struct.java              # Struct model (Record)
@@ -307,6 +411,8 @@ src/
 │   │   └── ParseResult.java         # Result container (Record)
 │   └── generator/
 │       └── JsonGenerator.java       # JSON output generator
+├── main/resources/
+│   └── logback.xml                  # Logging configuration
 └── test/
     └── java/
         └── parser/
@@ -315,8 +421,10 @@ src/
             ├── MultiFileParserTest.java
             ├── MultiFileReferenceTest.java    # Cross-file reference tests
             ├── CircularReferenceTest.java     # Circular reference detection
-            └── integration/
-                └── GccIntegrationTest.java
+            ├── SyntaxToleranceTest.java       # Mixed C syntax tolerance
+            ├── ConditionalCompilationTest.java           # Preprocessed conditional tests
+            ├── ConditionalCompilationWithGccTest.java    # Live GCC conditional tests
+            └── ExternalMacroDefinitionTest.java          # External macro file tests
 ```
 
 ## Tech Stack
@@ -324,8 +432,9 @@ src/
 - **Java 26**: Modern Java with Record classes, Switch Expressions, and Pattern Matching
 - **ANTLR 4.13.1**: Parser generator for robust grammar parsing
 - **Maven 3.9+**: Build and dependency management
-- **JUnit 5**: Unit testing (112+ tests)
+- **JUnit 5**: Unit testing (122+ tests)
 - **Jackson**: JSON and YAML processing
+- **SLF4J + Logback**: Logging framework with file output
 - **GCC**: C preprocessor for header files (`gcc -E -P`)
 
 ## Development
@@ -357,19 +466,38 @@ mvn clean package
 - **Standard C Types**: Only `uint1~uint32` supported, no `int/char/float`
 - **Comments**: Removed during GCC preprocessing (`gcc -E -P`)
 
+## Logging
+
+The application uses SLF4J + Logback for logging:
+
+### Log Files
+
+- **`logs/struct-parser.log`**: Application log with errors, warnings, and info messages
+- **`logs/preprocessed.log`**: Preprocessed header file content (for debugging)
+- **Console**: Real-time output during execution
+
+### Log Levels
+
+- **ERROR**: Parsing errors, GCC failures, configuration issues
+- **WARN**: Non-critical issues
+- **INFO**: File parsing progress, results summary
+- **DEBUG**: Detailed processing information, preprocessed content
+
 ## Roadmap
 
 ### v1.3 (Planned)
+- [x] Syntax tolerance for mixed C code
+- [x] Conditional compilation support (`#ifdef`, `-D`, `-include`)
+- [x] Logging system (SLF4J + Logback)
 - [ ] Array type support (`uint8 data[4]`)
 - [ ] Enhanced typedef semantics
 - [ ] Code generation (C/Python/Rust)
 - [ ] Bit-field alignment options
 
 ### v2.0 (Planned)
-- [ ] Conditional compilation (`#ifdef`)
-- [ ] Macro definition support
 - [ ] IDE plugin
 - [ ] LSP protocol support
+- [ ] Interactive struct visualization
 
 ## Documentation
 
