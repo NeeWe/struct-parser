@@ -200,13 +200,30 @@ public class JsonGenerator {
         }
         // 普通字段 - 紧凑格式，一行显示
         else {
-            sb.append("{\"name\" : \"").append(field.name()).append("\", ");
+            // 去除匿名 union 成员的特殊前缀
+            String displayName = stripAnonymousUnionPrefix(field.name());
+            sb.append("{\"name\" : \"").append(displayName).append("\", ");
             sb.append("\"type\" : \"").append(field.type().toString().toLowerCase()).append("\", ");
             sb.append("\"bits\" : ").append(field.bitWidth()).append(", ");
             sb.append("\"offset\" : ").append(field.bitOffset()).append("}");
         }
         
         return sb.toString();
+    }
+    
+    /**
+     * 去除匿名 union 成员的特殊前缀
+     */
+    private String stripAnonymousUnionPrefix(String name) {
+        if (name == null) {
+            return "";
+        }
+        // 处理格式: __anon_union_<id>__member__<actual_name>
+        if (name.contains("__member__")) {
+            int idx = name.indexOf("__member__");
+            return name.substring(idx + "__member__".length());
+        }
+        return name;
     }
     
     private String convertMap(Map<String, String> map) {

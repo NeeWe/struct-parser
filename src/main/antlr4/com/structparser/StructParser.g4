@@ -38,6 +38,8 @@ field
     : typeSpecifier fieldName ';'                                    // 基础类型字段
     | 'struct' '{' fieldList '}' fieldName ';'                       // 匿名结构体带名称
     | 'union' '{' fieldList '}' fieldName ';'                        // 匿名联合体带名称
+    | 'struct' '{' fieldList '}' ';'                                 // 匿名结构体（无名称，字段展开）
+    | 'union' '{' fieldList '}' ';'                                  // 匿名联合体（无名称，字段展开）
     | 'struct' Identifier fieldName ';'                              // 引用已定义的结构体（标准C语法）
     | 'union' Identifier fieldName ';'                               // 引用已定义的联合体（标准C语法）
     | Identifier fieldName ';'                                       // DSL语法：直接使用类型名称引用结构体/联合体

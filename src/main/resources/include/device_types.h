@@ -32,4 +32,18 @@ struct DataPacket {
     Status packet_status;
 };
 
+struct Meta {
+    union {
+        uint1 flag1;
+        uint1 flag2;
+    };
+
+    union {
+        uint1 flag3;
+        uint1 flag4;
+    };
+
+    uint22 typeid;
+};
+
 #endif // DEVICE_TYPES_H

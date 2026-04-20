@@ -133,23 +133,48 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
         
         String first = ctx.getChild(0).getText();
         
-        // 匿名结构体: struct { ... } name;
+        // 匿名结构体: struct { ... } name; 或 struct { ... }; (无名称)
         if (first.equals("struct") && ctx.fieldList() != null) {
-            String fieldName = ctx.fieldName().getText();
             var fields = parseFields(ctx.fieldList());
             var struct = new Struct(null, fields, true);
-            // 不添加到顶层 structs，只作为嵌套字段
-            addNestedField(fieldName, Type.STRUCT, struct.totalBits(), struct, null);
+            
+            // 检查是否有字段名
+            boolean hasFieldName = ctx.fieldName() != null;
+            String fieldName = hasFieldName ? ctx.fieldName().getText() : null;
+            
+            if (!hasFieldName) {
+                // 真正的匿名 struct（无字段名）：将字段直接展开到父级
+                for (Field f : fields) {
+                    addField(f.name(), f.type(), f.bitWidth());
+                }
+            } else {
+                // 命名 struct：作为嵌套字段
+                addNestedField(fieldName, Type.STRUCT, struct.totalBits(), struct, null);
+            }
             return null;
         }
         
-        // 匿名联合体: union { ... } name;
+        // 匿名联合体: union { ... } name; 或 union { ... }; (无名称)
         if (first.equals("union") && ctx.fieldList() != null) {
-            String fieldName = ctx.fieldName().getText();
             var fields = parseUnionFields(ctx.fieldList());
             var union = new Union(null, fields, true);
-            // 不添加到顶层 unions，只作为嵌套字段
-            addNestedField(fieldName, Type.UNION, union.totalBits(), null, union);
+            
+            // 检查是否有字段名
+            boolean hasFieldName = ctx.fieldName() != null;
+            String fieldName = hasFieldName ? ctx.fieldName().getText() : null;
+            
+            if (!hasFieldName) {
+                // 真正的匿名 union（无字段名）：将字段直接展开到父级，所有字段共享相同偏移量
+                int maxBits = fields.stream().mapToInt(Field::bitWidth).max().orElse(0);
+                int currentUnionId = anonymousUnionCounter++;
+                for (Field f : fields) {
+                    // 添加字段，但标记为匿名 union 的成员
+                    addFieldFromAnonymousUnionWithId(f.name(), f.type(), f.bitWidth(), maxBits, currentUnionId);
+                }
+            } else {
+                // 命名 union：作为嵌套字段
+                addNestedField(fieldName, Type.UNION, union.totalBits(), null, union);
+            }
             return null;
         }
         
@@ -263,6 +288,22 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
     
     // ============ Helper Methods ============
     
+    /**
+     * 字段组，用于表示来自同一个匿名 union 的字段
+     */
+    private record FieldGroup(List<Field> fields, int unionWidth, boolean isAnonymousUnion) {
+        static FieldGroup single(Field field) {
+            return new FieldGroup(List.of(field), field.bitWidth(), false);
+        }
+        
+        static FieldGroup anonymousUnion(List<Field> fields, int unionWidth) {
+            return new FieldGroup(fields, unionWidth, true);
+        }
+    }
+    
+    // 用于跟踪当前正在收集的匿名 union 字段
+    private int anonymousUnionCounter = 0;
+    
     private List<Field> parseFields(StructParserParser.FieldListContext ctx) {
         if (ctx == null) return List.of();
         
@@ -270,16 +311,117 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
         ctx.field().forEach(this::visit);
         var context = stack.pop();
         
+        // 将字段分组（识别匿名 union 字段组）
+        List<FieldGroup> groups = groupFields(context.fields);
+        
         // 计算偏移量
         var result = new ArrayList<Field>();
         int offset = 0;
-        for (Field f : context.fields) {
-            // 为字段设置偏移量，并递归处理嵌套结构
-            Field updatedField = setFieldOffset(f, offset);
-            result.add(updatedField);
-            offset += f.bitWidth();
+        for (FieldGroup group : groups) {
+            if (group.isAnonymousUnion()) {
+                // 匿名 union：所有字段共享相同的 offset
+                for (Field f : group.fields()) {
+                    Field updatedField = setFieldOffset(f, offset);
+                    result.add(updatedField);
+                }
+                offset += group.unionWidth();
+            } else {
+                // 普通字段或命名嵌套结构
+                for (Field f : group.fields()) {
+                    Field updatedField = setFieldOffset(f, offset);
+                    result.add(updatedField);
+                    offset += f.bitWidth();
+                }
+            }
         }
         return result;
+    }
+    
+    /**
+     * 将字段列表分组，识别来自同一个匿名 union 的字段
+     */
+    private List<FieldGroup> groupFields(List<Field> fields) {
+        List<FieldGroup> groups = new ArrayList<>();
+        int i = 0;
+        
+        while (i < fields.size()) {
+            Field current = fields.get(i);
+            
+            // 检查是否是匿名 union 字段的标记
+            String unionId = getAnonymousUnionId(current);
+            if (unionId != null) {
+                // 收集所有属于这个匿名 union 的字段
+                List<Field> unionFields = new ArrayList<>();
+                int maxBits = 0;
+                
+                while (i < fields.size()) {
+                    Field f = fields.get(i);
+                    String fid = getAnonymousUnionId(f);
+                    // 如果字段不属于同一个 union，停止收集
+                    if (fid == null || !fid.equals(unionId)) {
+                        break;
+                    }
+                    // 清理字段名称，去除标记前缀
+                    String cleanName = stripAnonymousUnionPrefix(f.name());
+                    Field cleanField = new Field(cleanName, f.type(), f.bitWidth(), f.bitOffset(), f.nestedStruct(), f.nestedUnion());
+                    unionFields.add(cleanField);
+                    maxBits = Math.max(maxBits, f.bitWidth());
+                    i++;
+                }
+                
+                groups.add(FieldGroup.anonymousUnion(unionFields, maxBits));
+            } else {
+                groups.add(FieldGroup.single(current));
+                i++;
+            }
+        }
+        
+        return groups;
+    }
+    
+    /**
+     * 获取字段的匿名 union ID，如果不是匿名 union 成员则返回 null
+     */
+    private String getAnonymousUnionId(Field field) {
+        if (field.name() == null) {
+            return null;
+        }
+        String name = field.name();
+        if (name.startsWith("__anon_union_") && name.contains("__member__")) {
+            int start = "__anon_union_".length();
+            int end = name.indexOf("__member__");
+            return name.substring(start, end);
+        }
+        return null;
+    }
+    
+    /**
+     * 去除匿名 union 成员的特殊前缀
+     */
+    private String stripAnonymousUnionPrefix(String name) {
+        if (name == null) {
+            return "";
+        }
+        // 处理格式: __anon_union_<id>__member__<actual_name>
+        if (name.contains("__member__")) {
+            int idx = name.indexOf("__member__");
+            return name.substring(idx + "__member__".length());
+        }
+        return name;
+    }
+    
+    /**
+     * 检查字段是否是匿名 union 的标记
+     */
+    private boolean isAnonymousUnionMarker(Field field) {
+        return field.name() != null && field.name().startsWith("__anon_union__");
+    }
+    
+    /**
+     * 检查字段是否是匿名 union 的成员
+     */
+    private boolean isAnonymousUnionMember(Field field) {
+        return field.name() != null && field.name().startsWith("__anon_union_member__");
     }
     
     private List<Field> parseUnionFields(StructParserParser.FieldListContext ctx) {
@@ -290,6 +432,7 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
         var context = stack.pop();
         
         // Union 内的字段在创建时 offset 为 0，后续会在父级结构中更新
+        // 注意：匿名 union/struct 的字段已经被展开，所以这里只处理真正的 union 字段
         return context.fields.stream()
             .map(f -> new Field(f.name(), f.type(), f.bitWidth(), 0, f.nestedStruct(), f.nestedUnion()))
             .toList();
@@ -298,6 +441,35 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
     private void addField(String name, Type type, int width) {
         if (!stack.isEmpty()) {
             stack.peek().fields.add(Field.of(name, type, width));
+        }
+    }
+    
+    /**
+     * 添加来自匿名 union 的字段
+     * @param name 字段名
+     * @param type 字段类型
+     * @param width 字段位宽
+     * @param unionWidth 匿名 union 的总宽度（最大字段宽度）
+     */
+    private void addFieldFromAnonymousUnion(String name, Type type, int width, int unionWidth) {
+        if (!stack.isEmpty()) {
+            Context ctx = stack.peek();
+            // 使用特殊前缀标记这是匿名 union 的成员，包含 union ID
+            String markerName = "__anon_union_" + anonymousUnionCounter + "__member__" + name;
+            Field field = new Field(markerName, type, width, 0, null, null);
+            ctx.fields.add(field);
+        }
+    }
+    
+    /**
+     * 添加来自匿名 union 的字段（带指定 ID）
+     */
+    private void addFieldFromAnonymousUnionWithId(String name, Type type, int width, int unionWidth, int unionId) {
+        if (!stack.isEmpty()) {
+            Context ctx = stack.peek();
+            String markerName = "__anon_union_" + unionId + "__member__" + name;
+            Field field = new Field(markerName, type, width, 0, null, null);
+            ctx.fields.add(field);
         }
     }
     
