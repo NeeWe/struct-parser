@@ -1,18 +1,12 @@
 # Struct Parser 配置文件
-# 程序将扫描 includePaths 中的头文件(.h, .hpp, .hh, .hxx)
+# 程序将从 compileConfigFile 中提取编译命令并扫描头文件
 
-# 必需：头文件搜索路径列表
-# 每个路径将被扫描，该目录下的头文件会被解析（不递归子目录）
-includePaths:
-  - ./src/main/resources/include
-
-# 可选：GCC 命令
-# 默认使用系统 gcc，可以指定交叉编译器如 arm-none-eabi-gcc
-gccCommand: gcc
-
-# 必需：强制使用 GCC 预处理
-# 必须为 true，确保解析前进行标准 C 预处理
-gccRequired: true
+# 必需：编译配置文件路径
+# 支持以下格式：
+# 1. compile_commands.json (JSON Compilation Database)
+# 2. Makefile (提取 CFLAGS/CPPFLAGS)
+# 3. 直接命令文件 (包含完整的 gcc 命令和参数)
+compileConfigFile: ./src/main/resources/include/command.txt
 
 # 可选：输出配置
 output:

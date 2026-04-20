@@ -27,11 +27,7 @@ public class ConfigLoaderTest {
     void testLoadYamlConfig() throws IOException {
         Path configFile = tempDir.resolve("test.yaml");
         Files.writeString(configFile, """
-            includePaths:
-              - ./include
-              - ./drivers
-            gccCommand: gcc
-            gccRequired: true
+            compileConfigFile: ./compile_commands.json
             output:
               format: json
               outputFile: output/result.json
@@ -39,9 +35,7 @@ public class ConfigLoaderTest {
         
         ParserConfig config = ConfigLoader.load(configFile);
         
-        assertEquals(List.of("./include", "./drivers"), config.includePaths());
-        assertEquals("gcc", config.gccCommand());
-        assertTrue(config.gccRequired());
+        assertEquals("./compile_commands.json", config.compileConfigFile());
         assertEquals("json", config.output().format());
         assertEquals("output/result.json", config.output().outputFile());
     }
@@ -52,17 +46,12 @@ public class ConfigLoaderTest {
     void testLoadYmlConfig() throws IOException {
         Path configFile = tempDir.resolve("test.yml");
         Files.writeString(configFile, """
-            includePaths:
-              - ./src
-            gccCommand: arm-none-eabi-gcc
-            gccRequired: true
+            compileConfigFile: Makefile
             """);
         
         ParserConfig config = ConfigLoader.load(configFile);
         
-        assertEquals(List.of("./src"), config.includePaths());
-        assertEquals("arm-none-eabi-gcc", config.gccCommand());
-        assertTrue(config.gccRequired());
+        assertEquals("Makefile", config.compileConfigFile());
     }
     
     // ========== JSON 配置测试 ==========
@@ -74,9 +63,7 @@ public class ConfigLoaderTest {
         Path configFile = tempDir.resolve("test.json");
         Files.writeString(configFile, """
             {
-              "includePaths": ["./inc", "./hal"],
-              "gccCommand": "gcc",
-              "gccRequired": true,
+              "compileConfigFile": "compile_commands.json",
               "output": {
                 "format": "json",
                 "outputFile": "out.json"
@@ -86,8 +73,7 @@ public class ConfigLoaderTest {
         
         ParserConfig config = ConfigLoader.load(configFile);
         
-        assertEquals(2, config.includePaths().size());
-        assertEquals("./inc", config.includePaths().get(0));
+        assertEquals("compile_commands.json", config.compileConfigFile());
     }
     
     // ========== 默认值测试 ==========
@@ -98,9 +84,7 @@ public class ConfigLoaderTest {
     void testConfigDefaults() {
         ParserConfig config = ParserConfig.defaults();
         
-        assertTrue(config.includePaths().isEmpty());
-        assertEquals("gcc", config.gccCommand());
-        assertTrue(config.gccRequired()); // 默认强制使用 GCC
+        assertNull(config.compileConfigFile());
         assertNotNull(config.output());
         assertEquals("json", config.output().format());
     }
@@ -111,16 +95,14 @@ public class ConfigLoaderTest {
     void testPartialConfigWithDefaults() throws IOException {
         Path configFile = tempDir.resolve("partial.yaml");
         Files.writeString(configFile, """
-            includePaths:
-              - ./src
-            gccRequired: true
+            compileConfigFile: ./command.txt
             """);
         
         ParserConfig config = ConfigLoader.load(configFile);
         
-        assertEquals(List.of("./src"), config.includePaths());
-        assertEquals("gcc", config.gccCommand(), "GCC command should default to 'gcc'");
-        assertTrue(config.gccRequired(), "GCC required should default to true");
+        assertEquals("./command.txt", config.compileConfigFile());
+        assertNotNull(config.output(), "Output config should have defaults");
+        assertEquals("json", config.output().format(), "Output format should default to 'json'");
     }
     
     // ========== 配置验证测试 ==========
@@ -129,13 +111,11 @@ public class ConfigLoaderTest {
     @Order(30)
     @DisplayName("验证有效配置")
     void testValidateValidConfig() throws IOException {
-        Path includeDir = tempDir.resolve("include");
-        Files.createDirectories(includeDir);
+        Path compileConfig = tempDir.resolve("compile_commands.json");
+        Files.writeString(compileConfig, "[]");
         
         ParserConfig config = new ParserConfig(
-            List.of(includeDir.toString()),
-            "gcc",
-            true,
+            compileConfig.toString(),
             null
         );
         
@@ -144,33 +124,31 @@ public class ConfigLoaderTest {
     
     @Test
     @Order(31)
-    @DisplayName("验证缺失包含路径")
-    void testValidateMissingIncludePaths() {
+    @DisplayName("验证缺失编译配置文件")
+    void testValidateMissingCompileConfigFile() {
         ParserConfig config = ParserConfig.defaults();
         
         IllegalStateException exception = assertThrows(
             IllegalStateException.class,
             config::validate,
-            "Should throw for missing include paths"
+            "Should throw for missing compile config file"
         );
-        assertTrue(exception.getMessage().contains("includePaths"));
+        assertTrue(exception.getMessage().contains("compileConfigFile"));
     }
     
     @Test
     @Order(32)
-    @DisplayName("验证不存在的包含路径")
-    void testValidateNonExistentIncludePath() {
+    @DisplayName("验证不存在的编译配置文件")
+    void testValidateNonExistentCompileConfigFile() {
         ParserConfig config = new ParserConfig(
-            List.of("/path/that/does/not/exist"),
-            "gcc",
-            true,
+            "/path/that/does/not/exist.json",
             null
         );
         
         IllegalStateException exception = assertThrows(
             IllegalStateException.class,
             config::validate,
-            "Should throw for non-existent include path"
+            "Should throw for non-existent compile config file"
         );
         assertTrue(exception.getMessage().contains("does not exist"));
     }
@@ -182,14 +160,12 @@ public class ConfigLoaderTest {
     @DisplayName("自动加载 YAML 配置")
     void testAutoLoadYaml() throws IOException {
         Files.writeString(tempDir.resolve("struct-parser.yaml"), """
-            includePaths:
-              - ./src
-            gccRequired: true
+            compileConfigFile: ./compile_commands.json
             """);
         
         ParserConfig config = ConfigLoader.autoLoad(tempDir);
         
-        assertEquals(List.of("./src"), config.includePaths());
+        assertEquals("./compile_commands.json", config.compileConfigFile());
     }
     
     @Test
@@ -197,14 +173,12 @@ public class ConfigLoaderTest {
     @DisplayName("自动加载 YML 配置（YAML 不存在时）")
     void testAutoLoadYml() throws IOException {
         Files.writeString(tempDir.resolve("struct-parser.yml"), """
-            includePaths:
-              - ./src
-            gccRequired: true
+            compileConfigFile: Makefile
             """);
         
         ParserConfig config = ConfigLoader.autoLoad(tempDir);
         
-        assertEquals(List.of("./src"), config.includePaths());
+        assertEquals("Makefile", config.compileConfigFile());
     }
     
     @Test
@@ -212,12 +186,12 @@ public class ConfigLoaderTest {
     @DisplayName("自动加载 JSON 配置（YAML/YML 不存在时）")
     void testAutoLoadJson() throws IOException {
         Files.writeString(tempDir.resolve("struct-parser.json"), """
-            {"includePaths": ["./src"], "gccRequired": true}
+            {"compileConfigFile": "compile_commands.json"}
             """);
         
         ParserConfig config = ConfigLoader.autoLoad(tempDir);
         
-        assertEquals(List.of("./src"), config.includePaths());
+        assertEquals("compile_commands.json", config.compileConfigFile());
     }
     
     @Test
@@ -240,9 +214,7 @@ public class ConfigLoaderTest {
     void testSaveYamlConfig() throws IOException {
         Path configFile = tempDir.resolve("saved.yaml");
         ParserConfig config = new ParserConfig(
-            List.of("./inc", "./src"),
-            "arm-gcc",
-            true,
+            "compile_commands.json",
             new ParserConfig.OutputConfig("json", "out.json")
         );
         
@@ -250,8 +222,7 @@ public class ConfigLoaderTest {
         
         assertTrue(Files.exists(configFile), "Config file should be created");
         String content = Files.readString(configFile);
-        assertTrue(content.contains("./inc"), "Should contain include path");
-        assertTrue(content.contains("arm-gcc"), "Should contain GCC command");
+        assertTrue(content.contains("compile_commands.json"), "Should contain compile config file");
     }
     
     @Test
@@ -260,9 +231,7 @@ public class ConfigLoaderTest {
     void testSaveJsonConfig() throws IOException {
         Path configFile = tempDir.resolve("saved.json");
         ParserConfig config = new ParserConfig(
-            List.of("./include"),
-            "gcc",
-            true,
+            "Makefile",
             null
         );
         
@@ -270,46 +239,7 @@ public class ConfigLoaderTest {
         
         assertTrue(Files.exists(configFile), "Config file should be created");
         String content = Files.readString(configFile);
-        assertTrue(content.contains("./include"), "Should contain include path");
-    }
-    
-    // ========== 路径转换测试 ==========
-    
-    @Test
-    @Order(60)
-    @DisplayName("验证包含路径")
-    void testValidateIncludePaths() throws IOException {
-        Path tempDir = Files.createTempDirectory("test");
-        Path includeDir = tempDir.resolve("include");
-        Files.createDirectories(includeDir);
-        
-        ParserConfig config = new ParserConfig(
-            List.of(includeDir.toString()),
-            "gcc",
-            true,
-            null
-        );
-        
-        assertDoesNotThrow(config::validate, "Valid include path should not throw");
-        
-        // 清理
-        Files.deleteIfExists(includeDir);
-        Files.deleteIfExists(tempDir);
-    }
-    
-    @Test
-    @Order(61)
-    @DisplayName("获取包含路径列表")
-    void testGetIncludePaths() {
-        ParserConfig config = new ParserConfig(
-            List.of("./inc", "./drivers"),
-            "gcc",
-            true,
-            null
-        );
-        
-        List<Path> paths = config.getIncludePaths();
-        assertEquals(2, paths.size());
+        assertTrue(content.contains("Makefile"), "Should contain compile config file");
     }
     
     // ========== 错误处理测试 ==========

@@ -76,11 +76,10 @@ public class StructParserApp {
             System.err.println();
             System.err.println("Please create a configuration file with the following content:");
             System.err.println();
-            System.err.println("includePaths:");
-            System.err.println("  - ./include");
-            System.err.println("  - ./drivers");
-            System.err.println("gccCommand: gcc");
-            System.err.println("gccRequired: true");
+            System.err.println("compileConfigFile: compile_commands.json  # or Makefile, or command.txt");
+            System.err.println("output:");
+            System.err.println("  format: json");
+            System.err.println("  outputFile: output/structs.json");
             System.exit(1);
             return;
         }
@@ -94,21 +93,19 @@ public class StructParserApp {
             return;
         }
         
-        // 扫描头文件
+        // 从编译配置文件提取头文件路径
+        Path compileConfigPath = Paths.get(config.compileConfigFile());
         List<Path> headerFiles;
         try {
-            headerFiles = HeaderFileScanner.scan(config.getIncludePaths());
+            headerFiles = extractHeaderFilesFromCompileConfig(compileConfigPath);
         } catch (IOException e) {
-            System.err.println("Error scanning header files: " + e.getMessage());
+            System.err.println("Error extracting header files from compile config: " + e.getMessage());
             System.exit(1);
             return;
         }
         
         if (headerFiles.isEmpty()) {
-            System.err.println("Error: No header files found in include paths:");
-            for (Path path : config.getIncludePaths()) {
-                System.err.println("  - " + path);
-            }
+            System.err.println("Error: No header files found in compile config: " + compileConfigPath);
             System.exit(1);
             return;
         }
@@ -124,19 +121,33 @@ public class StructParserApp {
     }
     
     /**
+     * 从编译配置文件提取头文件列表
+     */
+    private static List<Path> extractHeaderFilesFromCompileConfig(Path compileConfigPath) throws IOException {
+        // 简化实现：扫描编译配置文件所在目录及其子目录中的头文件
+        // TODO: 实际应该解析 compile_commands.json 或 Makefile 来提取具体的头文件
+        Path baseDir = compileConfigPath.getParent();
+        if (baseDir == null) {
+            baseDir = Paths.get(".");
+        }
+        return HeaderFileScanner.scan(List.of(baseDir));
+    }
+    
+    /**
      * 解析所有头文件并合并结果
      */
     private static void parseAllHeaders(ParserConfig config, List<Path> headerFiles) {
         var service = new StructParserService();
         var generator = new JsonGenerator();
         
-        // 配置 GCC 预处理（强制启用）
-        service.enableGccPreprocessing();
-        service.setGccCommand(config.gccCommand());
-        
-        // 添加包含路径
-        for (Path path : config.getIncludePaths()) {
-            service.addSearchPath(path);
+        // 加载编译配置
+        try {
+            Path compileConfigPath = Paths.get(config.compileConfigFile());
+            service.loadCompileConfig(compileConfigPath);
+        } catch (IOException e) {
+            System.err.println("Error loading compile config: " + e.getMessage());
+            System.exit(1);
+            return;
         }
         
         // 合并所有解析结果
@@ -226,7 +237,7 @@ public class StructParserApp {
         System.out.println("Struct Parser - C-style struct/union parser with GCC preprocessing");
         System.out.println();
         System.out.println("Usage:");
-        System.out.println("  java -jar struct-parser.jar           Parse all headers in includePaths");
+        System.out.println("  java -jar struct-parser.jar           Parse all headers from compile config");
         System.out.println("  java -jar struct-parser.jar gcc-info  Check GCC availability");
         System.out.println("  java -jar struct-parser.jar help      Show this help message");
         System.out.println();
@@ -234,23 +245,24 @@ public class StructParserApp {
         System.out.println("  Required in current directory");
         System.out.println();
         System.out.println("  Example:");
-        System.out.println("    includePaths:");
-        System.out.println("      - ./include       # Scanned recursively");
-        System.out.println("      - ./drivers       # Scanned recursively");
-        System.out.println("    gccCommand: gcc");
-        System.out.println("    gccRequired: true");
+        System.out.println("    compileConfigFile: compile_commands.json  # or Makefile, or command.txt");
         System.out.println("    output:");
         System.out.println("      format: json");
         System.out.println("      outputFile: output.json");
         System.out.println();
+        System.out.println("Compile Config File Formats:");
+        System.out.println("  1. compile_commands.json - JSON Compilation Database");
+        System.out.println("  2. Makefile - Will extract CFLAGS/CPPFLAGS");
+        System.out.println("  3. command.txt - Direct gcc command with flags");
+        System.out.println();
         System.out.println("Features:");
-        System.out.println("  - Scans .h, .hpp files in includePaths (non-recursive)");
+        System.out.println("  - Extracts header files from compile config directory");
         System.out.println("  - GCC preprocessing is mandatory");
         System.out.println("  - Merges results from all header files");
         System.out.println();
         System.out.println("Requirements:");
         System.out.println("  - GCC must be installed and in PATH");
         System.out.println("  - Configuration file must exist");
-        System.out.println("  - At least one include path must be specified");
+        System.out.println("  - Compile config file must exist");
     }
 }

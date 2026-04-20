@@ -22,9 +22,10 @@ public class MultiFileReferenceTest {
     
     @BeforeEach
     public void setUp() {
-        parser = new StructParserService();
-        // 添加搜索路径以便找到被引用的头文件
-        parser.addSearchPath(INCLUDE_DIR);
+        parser = new StructParserService()
+            .disableGccPreprocessing(); // 使用自定义 #include 处理而不是 GCC
+        // 添加搜索路径以便找到被引用的头文件 - 使用 HeaderFileLoader
+        parser.getFileLoader().addSearchPath(INCLUDE_DIR);
     }
     
     @Test

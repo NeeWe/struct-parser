@@ -22,7 +22,7 @@ public class StructParserService {
     
     private final HeaderFileLoader fileLoader;
     private final GccPreprocessor gccPreprocessor;
-    private boolean useGccPreprocessing = false;
+    private boolean useGccPreprocessing = true; // 默认启用
     
     public StructParserService() {
         this.fileLoader = new HeaderFileLoader();
@@ -30,39 +30,18 @@ public class StructParserService {
     }
     
     /**
-     * 启用 GCC 预处理
+     * 从编译配置文件加载预处理命令
      */
-    public StructParserService enableGccPreprocessing() {
-        this.useGccPreprocessing = true;
+    public StructParserService loadCompileConfig(Path configFile) throws IOException {
+        gccPreprocessor.loadCompileConfig(configFile);
         return this;
     }
     
     /**
-     * 禁用 GCC 预处理（默认）
+     * 禁用 GCC 预处理，使用自定义 #include 处理
      */
     public StructParserService disableGccPreprocessing() {
         this.useGccPreprocessing = false;
-        return this;
-    }
-    
-    /**
-     * 添加头文件搜索路径（同时适用于 GCC 预处理和自定义加载器）
-     */
-    public StructParserService addSearchPath(Path path) {
-        fileLoader.addSearchPath(path);
-        gccPreprocessor.addIncludePath(path);
-        return this;
-    }
-    
-    public StructParserService addSearchPath(String path) {
-        return addSearchPath(Paths.get(path));
-    }
-    
-    /**
-     * 设置 GCC 命令（用于交叉编译器）
-     */
-    public StructParserService setGccCommand(String command) {
-        gccPreprocessor.setGccCommand(command);
         return this;
     }
     

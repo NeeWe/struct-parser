@@ -21,7 +21,8 @@ public class MultiFileParserTest {
     
     @BeforeEach
     public void setUp() {
-        parser = new StructParserService();
+        parser = new StructParserService()
+            .disableGccPreprocessing(); // 使用自定义 #include 处理而不是 GCC
     }
     
     @Test
@@ -82,8 +83,8 @@ public class MultiFileParserTest {
     
     @Test
     public void testWithSearchPath() throws IOException {
-        // 使用搜索路径解析
-        parser.addSearchPath(TEST_RESOURCES.resolve("include"));
+        // 使用搜索路径解析 - 现在使用 HeaderFileLoader 直接添加
+        parser.getFileLoader().addSearchPath(TEST_RESOURCES.resolve("include"));
         
         // 从 types.h 解析，它引用了 include/common.h
         Path file = TEST_RESOURCES.resolve("types.h");
@@ -206,9 +207,9 @@ public class MultiFileParserTest {
     
     @Test
     public void testMultipleSearchPaths() throws IOException {
-        // 添加多个搜索路径
-        parser.addSearchPath(TEST_RESOURCES)
-              .addSearchPath(TEST_RESOURCES.resolve("include"));
+        // 添加多个搜索路径 - 使用 HeaderFileLoader
+        parser.getFileLoader().addSearchPath(TEST_RESOURCES);
+        parser.getFileLoader().addSearchPath(TEST_RESOURCES.resolve("include"));
         
         Path file = TEST_RESOURCES.resolve("device.h");
         ParseResult result = parser.parseFile(file);

@@ -1,0 +1,7 @@
+[
+  {
+    "directory": "/Users/dingwei/workspace/qoder/struct-parser/src/main/resources/include",
+    "command": "gcc -E -P -I. -nostdinc",
+    "file": "types.h"
+  }
+]

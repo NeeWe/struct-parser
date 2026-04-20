@@ -23,9 +23,13 @@ public class GccPreprocessorTest {
     private GccPreprocessor preprocessor;
     
     @BeforeEach
-    void setUp() {
+    void setUp() throws IOException {
         assumeTrue(GccPreprocessor.isGccAvailable(), "GCC not available, skipping tests");
         preprocessor = new GccPreprocessor();
+        // 创建默认的编译配置文件
+        Path compileConfig = tempDir.resolve("command.txt");
+        Files.writeString(compileConfig, "gcc -E -P -I.");
+        preprocessor.loadCompileConfig(compileConfig);
     }
     
     // ========== 基础功能测试 ==========
@@ -205,7 +209,19 @@ public class GccPreprocessorTest {
             };
             """);
         
-        preprocessor.addIncludePath(includeDir);
+        // 创建编译配置文件
+        Path compileConfig = includeDir.resolve("compile_commands.json");
+        Files.writeString(compileConfig, """
+            [
+              {
+                "directory": "%s",
+                "command": "gcc -E -P -I%s main.h",
+                "file": "main.h"
+              }
+            ]
+            """.formatted(includeDir.toString(), includeDir.toString()));
+        
+        preprocessor.loadCompileConfig(compileConfig);
         var result = preprocessor.preprocess(mainHeader);
         
         assertFalse(result.hasErrors(), "Should not have errors: " + result.errors());
@@ -237,7 +253,19 @@ public class GccPreprocessorTest {
             struct Level3 { struct Level2 l2; uint8 c; };
             """);
         
-        preprocessor.addIncludePath(includeDir);
+        // 创建编译配置文件
+        Path compileConfig = includeDir.resolve("compile_commands.json");
+        Files.writeString(compileConfig, """
+            [
+              {
+                "directory": "%s",
+                "command": "gcc -E -P -I%s nested.h",
+                "file": "nested.h"
+              }
+            ]
+            """.formatted(includeDir.toString(), includeDir.toString()));
+        
+        preprocessor.loadCompileConfig(compileConfig);
         var result = preprocessor.preprocess(mainHeader);
         
         assertFalse(result.hasErrors(), "Should not have errors");
@@ -364,7 +392,11 @@ public class GccPreprocessorTest {
             };
             """);
         
-        preprocessor.setGccCommand("gcc");
+        // 创建简单的编译配置文件
+        Path compileConfig = tempDir.resolve("command.txt");
+        Files.writeString(compileConfig, "gcc -E -P -I.");
+        
+        preprocessor.loadCompileConfig(compileConfig);
         var result = preprocessor.preprocess(header);
         
         assertFalse(result.hasErrors(), "Should work with custom gcc command");
