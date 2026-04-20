@@ -3,7 +3,18 @@ grammar StructParser;
 // ==================== Parser Rules ====================
 
 program
-    : declaration* EOF
+    : statement* EOF
+    ;
+
+// 顶层语句：可以是声明，也可以是其他任意内容（会被跳过）
+statement
+    : declaration
+    | otherStatement  // 忽略其他语句
+    ;
+
+// 其他语句：匹配任何非声明的语句并跳过
+otherStatement
+    : ~('struct' | 'union' | 'typedef')+  // 匹配任何不是 struct/union/typedef 开头的 token
     ;
 
 declaration
@@ -45,6 +56,12 @@ field
     | Identifier fieldName ';'                                       // DSL语法：直接使用类型名称引用结构体/联合体
     | structDeclaration                                              // 嵌套结构体定义
     | unionDeclaration                                               // 嵌套联合体定义
+    | otherField                                                     // 忽略其他无法识别的字段
+    ;
+
+// 其他字段：匹配任何无法识别的字段并跳过
+otherField
+    : ~('struct' | 'union' | 'uint' | Identifier)+ ';'
     ;
 
 typeSpecifier
@@ -80,7 +97,12 @@ Whitespace
     : [ \t\r\n]+ -> skip
     ;
 
-// Preprocessor directives (skip for now)
+// Preprocessor directives (skip)
 PreprocessorDirective
     : '#' ~[\r\n]* -> skip
+    ;
+
+// Catch-all for any other characters (skip to avoid errors)
+AnyOther
+    : . -> skip
     ;

@@ -29,18 +29,21 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
     @Override
     public Object visitProgram(StructParserParser.ProgramContext ctx) {
         // 第一遍：收集所有顶层结构体和联合体的名称
-        collectDeclaredNames(ctx.declaration());
+        collectDeclaredNames(ctx.statement());
         
         // 第二遍：正常解析
-        ctx.declaration().forEach(this::visit);
+        ctx.statement().forEach(this::visit);
         return result;
     }
     
     /**
      * 第一遍扫描：收集所有顶层结构体和联合体的名称
      */
-    private void collectDeclaredNames(List<StructParserParser.DeclarationContext> declarations) {
-        for (var decl : declarations) {
+    private void collectDeclaredNames(List<StructParserParser.StatementContext> statements) {
+        for (var stmt : statements) {
+            var decl = stmt.declaration();
+            if (decl == null) continue;  // 跳过 otherStatement
+            
             if (decl.structDeclaration() != null) {
                 String name = decl.structDeclaration().Identifier() != null ? 
                     decl.structDeclaration().Identifier().getText() : null;
