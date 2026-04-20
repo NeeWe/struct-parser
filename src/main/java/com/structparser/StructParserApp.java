@@ -9,6 +9,8 @@ import com.structparser.model.Union;
 import com.structparser.parser.GccPreprocessor;
 import com.structparser.parser.HeaderFileScanner;
 import com.structparser.parser.StructParserService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -21,6 +23,8 @@ import java.util.List;
  * 应用程序入口 - 扫描并解析 includePaths 中的所有头文件
  */
 public class StructParserApp {
+    
+    private static final Logger logger = LoggerFactory.getLogger(StructParserApp.class);
     
     public static void main(String[] args) {
         // 无参数：执行解析
@@ -57,6 +61,7 @@ public class StructParserApp {
     private static void parseWithConfig() {
         // 检查 GCC 是否可用（强制要求）
         if (!GccPreprocessor.isGccAvailable()) {
+            logger.error("GCC is required but not available.");
             System.err.println("Error: GCC is required but not available.");
             System.err.println("Please install GCC to use this tool.");
             System.exit(1);
@@ -65,8 +70,10 @@ public class StructParserApp {
         // 加载配置文件
         ParserConfig config;
         try {
+            logger.info("Loading configuration...");
             config = ConfigLoader.autoLoad(Paths.get("."));
         } catch (IOException e) {
+            logger.error("Configuration file not found: {}", e.getMessage());
             System.err.println("Error: Configuration file not found.");
             System.err.println();
             System.err.println("Expected one of the following files in current directory:");
@@ -76,7 +83,7 @@ public class StructParserApp {
             System.err.println();
             System.err.println("Please create a configuration file with the following content:");
             System.err.println();
-            System.err.println("compileConfigFile: compile_commands.json  # or Makefile, or command.txt");
+            System.err.println("compileConfigFile: command.txt");
             System.err.println("output:");
             System.err.println("  format: json");
             System.err.println("  outputFile: output/structs.json");
@@ -88,6 +95,7 @@ public class StructParserApp {
         try {
             config.validate();
         } catch (IllegalStateException e) {
+            logger.error("Invalid configuration: {}", e.getMessage());
             System.err.println("Error: Invalid configuration - " + e.getMessage());
             System.exit(1);
             return;
@@ -99,22 +107,23 @@ public class StructParserApp {
         try {
             headerFiles = extractHeaderFilesFromCompileConfig(compileConfigPath);
         } catch (IOException e) {
+            logger.error("Error extracting header files: {}", e.getMessage());
             System.err.println("Error extracting header files from compile config: " + e.getMessage());
             System.exit(1);
             return;
         }
         
         if (headerFiles.isEmpty()) {
+            logger.error("No header files found in compile config: {}", compileConfigPath);
             System.err.println("Error: No header files found in compile config: " + compileConfigPath);
             System.exit(1);
             return;
         }
         
-        System.err.println("Found " + headerFiles.size() + " header file(s) to parse:");
+        logger.info("Found {} header file(s) to parse", headerFiles.size());
         for (Path file : headerFiles) {
-            System.err.println("  - " + file);
+            logger.debug("  - {}", file);
         }
-        System.err.println();
         
         // 解析所有头文件
         parseAllHeaders(config, headerFiles);
@@ -143,8 +152,10 @@ public class StructParserApp {
         // 加载编译配置
         try {
             Path compileConfigPath = Paths.get(config.compileConfigFile());
+            logger.info("Loading compile config: {}", compileConfigPath);
             service.loadCompileConfig(compileConfigPath);
         } catch (IOException e) {
+            logger.error("Error loading compile config: {}", e.getMessage());
             System.err.println("Error loading compile config: " + e.getMessage());
             System.exit(1);
             return;
@@ -156,7 +167,7 @@ public class StructParserApp {
         var allErrors = new ArrayList<String>();
         
         for (Path headerFile : headerFiles) {
-            System.err.println("Parsing: " + headerFile);
+            logger.info("Parsing: {}", headerFile);
             
             try {
                 ParseResult result = service.parseFile(headerFile);
@@ -166,7 +177,9 @@ public class StructParserApp {
                 allErrors.addAll(result.errors());
                 
             } catch (IOException e) {
-                allErrors.add("Error parsing " + headerFile + ": " + e.getMessage());
+                String errorMsg = "Error parsing " + headerFile + ": " + e.getMessage();
+                logger.error(errorMsg);
+                allErrors.add(errorMsg);
             }
         }
         
@@ -183,17 +196,21 @@ public class StructParserApp {
                 Path outputPath = Paths.get(config.output().outputFile());
                 Files.createDirectories(outputPath.getParent());
                 Files.writeString(outputPath, json);
+                logger.info("Output written to: {}", outputPath);
                 System.err.println("\nOutput written to: " + outputPath);
             } else {
                 // 输出到标准输出
                 System.out.println(json);
             }
         } catch (IOException e) {
+            logger.error("Error writing output: {}", e.getMessage());
             System.err.println("Error writing output: " + e.getMessage());
             System.exit(1);
         }
         
         // 报告结果
+        logger.info("Parsing completed - Structs: {}, Unions: {}, Errors: {}", 
+            allStructs.size(), allUnions.size(), allErrors.size());
         System.err.println("\nParsing completed:");
         System.err.println("  - Structs: " + allStructs.size());
         System.err.println("  - Unions: " + allUnions.size());

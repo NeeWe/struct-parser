@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- 控制台输出 -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- 应用日志文件 -->
+    <appender name="APP_LOG" class="ch.qos.logback.core.FileAppender">
+        <file>logs/struct-parser.log</file>
+        <append>true</append>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- 预处理后的头文件内容日志 -->
+    <appender name="PREPROCESS_LOG" class="ch.qos.logback.core.FileAppender">
+        <file>logs/preprocessed.log</file>
+        <append>false</append>
+        <encoder>
+            <pattern>%msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- 预处理日志记录器 -->
+    <logger name="com.structparser.parser.GccPreprocessor" level="DEBUG" additivity="false">
+        <appender-ref ref="PREPROCESS_LOG" />
+        <appender-ref ref="APP_LOG" />
+    </logger>
+
+    <!-- 根日志记录器 -->
+    <root level="INFO">
+        <appender-ref ref="CONSOLE" />
+        <appender-ref ref="APP_LOG" />
+    </root>
+</configuration>

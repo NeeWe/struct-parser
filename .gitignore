@@ -31,4 +31,8 @@ Thumbs.db
 *.tokens
 *.interp
 
+# Logs
+logs/
+*.log
+
 output

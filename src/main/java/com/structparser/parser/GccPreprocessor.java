@@ -1,5 +1,8 @@
 package com.structparser.parser;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -13,6 +16,9 @@ import java.util.stream.Collectors;
  */
 public class GccPreprocessor {
     
+    private static final Logger logger = LoggerFactory.getLogger(GccPreprocessor.class);
+    private static final Logger preprocessLogger = LoggerFactory.getLogger("com.structparser.parser.GccPreprocessor.preprocess");
+    
     private List<String> preprocessCommand = null;
     
     /**
@@ -20,15 +26,18 @@ public class GccPreprocessor {
      * 仅支持直接命令文件格式（类C DSL的gcc命令）
      */
     public GccPreprocessor loadCompileConfig(Path configFile) throws IOException {
+        logger.info("Loading compile config from: {}", configFile.toAbsolutePath());
         String content = Files.readString(configFile);
         
         // 解析直接命令
         preprocessCommand = parseDirectCommand(content);
         
         if (preprocessCommand == null || preprocessCommand.isEmpty()) {
+            logger.error("Failed to extract preprocessing command from: {}", configFile);
             throw new IOException("Failed to extract preprocessing command from: " + configFile);
         }
         
+        logger.debug("Loaded preprocess command: {}", String.join(" ", preprocessCommand));
         return this;
     }
     
@@ -75,8 +84,11 @@ public class GccPreprocessor {
      */
     public PreprocessResult preprocess(Path file) throws IOException {
         if (preprocessCommand == null || preprocessCommand.isEmpty()) {
+            logger.error("Compile config not loaded. Call loadCompileConfig() first.");
             throw new IllegalStateException("Compile config not loaded. Call loadCompileConfig() first.");
         }
+        
+        logger.info("Preprocessing file: {}", file.toAbsolutePath());
         
         // 复制命令并添加输入文件
         var command = new ArrayList<>(preprocessCommand);
@@ -86,6 +98,8 @@ public class GccPreprocessor {
         
         // 添加当前文件
         command.add(file.toAbsolutePath().toString());
+        
+        logger.debug("Executing command: {}", String.join(" ", command));
         
         ProcessBuilder pb = new ProcessBuilder(command);
         pb.redirectErrorStream(true);
@@ -104,16 +118,28 @@ public class GccPreprocessor {
             exitCode = process.waitFor();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            logger.error("Process interrupted for file: {}", file);
             return new PreprocessResult("", List.of("Process interrupted"), -1);
         }
         
         // 如果有错误，尝试从输出中提取
         List<String> errorList = new ArrayList<>();
         if (exitCode != 0) {
-            errorList.add("GCC preprocessing failed with exit code: " + exitCode);
+            String errorMsg = "GCC preprocessing failed with exit code: " + exitCode;
+            logger.error(errorMsg);
+            errorList.add(errorMsg);
+            
             if (!output.isEmpty()) {
-                errorList.add("Output: " + output.substring(0, Math.min(output.length(), 500)));
+                String outputPreview = output.substring(0, Math.min(output.length(), 500));
+                logger.error("GCC output: {}", outputPreview);
+                errorList.add("Output: " + outputPreview);
             }
+        } else {
+            // 记录预处理后的内容到单独的日志文件
+            logger.debug("Preprocessing successful, output length: {} chars", output.length());
+            preprocessLogger.debug("=== Preprocessed content for: {} ===", file.getFileName());
+            preprocessLogger.debug(output);
+            preprocessLogger.debug("=== End of preprocessed content ===\n");
         }
         
         return new PreprocessResult(output, errorList, exitCode);
