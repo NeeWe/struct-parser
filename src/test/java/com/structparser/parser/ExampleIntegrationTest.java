@@ -167,6 +167,7 @@ public class ExampleIntegrationTest {
         assertEquals(8, refB.get("offset").asInt());
         
         // 验证 ref_b 嵌套的 fields - 所有字段都要验证
+        // offset 是相对于最外层的绝对偏移
         assertTrue(refB.has("fields"));
         JsonNode refBFields = refB.get("fields");
         assertEquals(2, refBFields.size());
@@ -175,13 +176,13 @@ public class ExampleIntegrationTest {
         assertEquals("c", refB_fieldC.get("name").asText());
         assertEquals("uint4", refB_fieldC.get("type").asText());
         assertEquals(4, refB_fieldC.get("bits").asInt());
-        assertEquals(8, refB_fieldC.get("offset").asInt());
+        assertEquals(8, refB_fieldC.get("offset").asInt());  // 相对于最外层：ref_b 的 offset(8) + c 在 B 中的 offset(0)
         
         JsonNode refB_fieldD = refBFields.get(1);
         assertEquals("d", refB_fieldD.get("name").asText());
         assertEquals("uint4", refB_fieldD.get("type").asText());
         assertEquals(4, refB_fieldD.get("bits").asInt());
-        assertEquals(12, refB_fieldD.get("offset").asInt());
+        assertEquals(12, refB_fieldD.get("offset").asInt());  // 相对于最外层：ref_b 的 offset(8) + d 在 B 中的 offset(4)
     }
     
     @Test
@@ -247,7 +248,7 @@ public class ExampleIntegrationTest {
         assertEquals(16, fieldJ.get("bits").asInt());
         assertEquals(16, fieldJ.get("offset").asInt());
         
-        // 验证 union 内的字段（使用绝对偏移量）- 所有字段都要验证
+        // 验证 union 内的字段（offset 相对于最外层的绝对偏移）- 所有字段都要验证
         assertTrue(fieldJ.has("fields"));
         JsonNode jFields = fieldJ.get("fields");
         assertEquals(2, jFields.size());
@@ -258,13 +259,13 @@ public class ExampleIntegrationTest {
         assertEquals("h", jFieldH.get("name").asText());
         assertEquals("uint16", jFieldH.get("type").asText());
         assertEquals(16, jFieldH.get("bits").asInt());
-        assertEquals(16, jFieldH.get("offset").asInt()); // 绝对偏移量，与 union 的 offset 相同
+        assertEquals(16, jFieldH.get("offset").asInt());  // Union 内字段 offset = union 的 offset
         
         JsonNode jFieldI = jFields.get(1);
         assertEquals("i", jFieldI.get("name").asText());
         assertEquals("uint16", jFieldI.get("type").asText());
         assertEquals(16, jFieldI.get("bits").asInt());
-        assertEquals(16, jFieldI.get("offset").asInt()); // 绝对偏移量，与 union 的 offset 相同
+        assertEquals(16, jFieldI.get("offset").asInt());  // Union 内字段 offset = union 的 offset
         
         // 验证嵌套结构没有 anonymous 和 size_bits
         assertFalse(fieldG.has("anonymous"));

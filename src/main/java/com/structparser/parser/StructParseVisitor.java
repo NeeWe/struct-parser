@@ -2,24 +2,31 @@ package com.structparser.parser;
 
 import com.structparser.model.*;
 import com.structparser.StructParserBaseVisitor;
+import com.structparser.StructParserLexer;
 import com.structparser.StructParserParser;
 import org.antlr.v4.runtime.ParserRuleContext;
 
 import java.util.*;
 
 /**
- * ANTLR4 Visitor 实现
+ * ANTLR4 Visitor 实现 - 解析 struct/union 定义
+ * 
+ * 核心规则：
+ * 1. 所有字段的 offset 都是相对于最外层结构体的绝对偏移
+ * 2. 匿名嵌套（无字段名）时字段直接展开到父级
+ * 3. 具名嵌套和引用类型保留嵌套结构并展开 fields
+ * 4. Union 内所有成员共享相同的 offset
+ * 5. 支持前向引用（两遍扫描）
  */
 public class StructParseVisitor extends StructParserBaseVisitor<Object> {
     
     private ParseResult result = ParseResult.empty();
     private final Map<String, String> typedefs = new HashMap<>();
     private final List<String> errors = new ArrayList<>();
-    private final Deque<Context> stack = new ArrayDeque<>();
-    // 用于检测交叉引用：记录正在解析的结构体名称
-    private final Set<String> currentlyParsing = new HashSet<>();
-    // 所有已声明的顶层结构体和联合体名称（用于区分未定义和交叉引用）
-    private final Set<String> declaredNames = new HashSet<>();
+    
+    // 两遍扫描支持
+    private final Set<String> declaredNames = new HashSet<>();  // 所有已声明的类型名称
+    private final Set<String> currentlyParsing = new HashSet<>();  // 正在解析的类型（检测循环引用）
     
     public ParseResult getResult() {
         errors.forEach(e -> result = result.withError(e));
@@ -28,33 +35,31 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
     
     @Override
     public Object visitProgram(StructParserParser.ProgramContext ctx) {
-        // 第一遍：收集所有顶层结构体和联合体的名称
-        collectDeclaredNames(ctx.statement());
+        // 第一遍：收集所有顶层声明的名称
+        collectDeclaredNames(ctx.item());
         
         // 第二遍：正常解析
-        ctx.statement().forEach(this::visit);
+        ctx.item().forEach(this::visit);
         return result;
     }
     
     /**
-     * 第一遍扫描：收集所有顶层结构体和联合体的名称
+     * 第一遍扫描：收集所有顶层 struct/union 的名称
      */
-    private void collectDeclaredNames(List<StructParserParser.StatementContext> statements) {
-        for (var stmt : statements) {
-            var decl = stmt.declaration();
-            if (decl == null) continue;  // 跳过 otherStatement
+    private void collectDeclaredNames(List<StructParserParser.ItemContext> items) {
+        for (var item : items) {
+            var decl = item.declaration();
+            if (decl == null) continue;
             
             if (decl.structDeclaration() != null) {
-                String name = decl.structDeclaration().Identifier() != null ? 
-                    decl.structDeclaration().Identifier().getText() : null;
-                if (name != null) {
-                    declaredNames.add(name);
+                var structCtx = decl.structDeclaration();
+                if (structCtx.Identifier() != null) {
+                    declaredNames.add(structCtx.Identifier().getText());
                 }
             } else if (decl.unionDeclaration() != null) {
-                String name = decl.unionDeclaration().Identifier() != null ? 
-                    decl.unionDeclaration().Identifier().getText() : null;
-                if (name != null) {
-                    declaredNames.add(name);
+                var unionCtx = decl.unionDeclaration();
+                if (unionCtx.Identifier() != null) {
+                    declaredNames.add(unionCtx.Identifier().getText());
                 }
             }
         }
@@ -63,217 +68,394 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
     @Override
     public Object visitStructDeclaration(StructParserParser.StructDeclarationContext ctx) {
         String name = ctx.Identifier() != null ? ctx.Identifier().getText() : null;
+        boolean anonymous = (name == null);
         
+        // 检查重复定义
         if (name != null && result.getStructByName(name) != null) {
             addError(ctx, "Duplicate struct: " + name);
             return null;
         }
         
-        // 标记当前正在解析的结构体
+        // 标记正在解析（检测循环引用）
         if (name != null) {
             currentlyParsing.add(name);
         }
         
-        var fields = parseFields(ctx.fieldList());
-        var struct = new Struct(name, fields, name == null);
+        // 解析字段
+        List<Field> fields = parseFields(ctx.fieldList(), 0);
         
         // 移除标记
         if (name != null) {
             currentlyParsing.remove(name);
         }
         
-        if (stack.isEmpty()) {
+        var struct = new Struct(name, fields, anonymous);
+        
+        // 顶层 struct 添加到结果中
+        if (name != null || isTopLevel(ctx)) {
             result = result.withStruct(struct);
-        } else {
-            // 嵌套的 struct，添加到父字段中并保留嵌套信息
-            addNestedField(name, Type.STRUCT, struct.totalBits(), struct, null);
         }
+        
         return struct;
     }
     
     @Override
     public Object visitUnionDeclaration(StructParserParser.UnionDeclarationContext ctx) {
         String name = ctx.Identifier() != null ? ctx.Identifier().getText() : null;
+        boolean anonymous = (name == null);
         
+        // 检查重复定义
         if (name != null && result.getUnionByName(name) != null) {
             addError(ctx, "Duplicate union: " + name);
             return null;
         }
         
-        // 标记当前正在解析的联合体
+        // 标记正在解析
         if (name != null) {
             currentlyParsing.add(name);
         }
         
-        var fields = parseUnionFields(ctx.fieldList());
-        var union = new Union(name, fields, name == null);
+        // 解析字段
+        List<Field> fields = parseUnionFields(ctx.fieldList(), 0);
         
         // 移除标记
         if (name != null) {
             currentlyParsing.remove(name);
         }
         
-        if (stack.isEmpty()) {
+        var union = new Union(name, fields, anonymous);
+        
+        // 顶层 union 添加到结果中
+        if (name != null || isTopLevel(ctx)) {
             result = result.withUnion(union);
-        } else {
-            // 嵌套的 union，添加到父字段中并保留嵌套信息
-            addNestedField(name, Type.UNION, union.totalBits(), null, union);
         }
+        
         return union;
     }
     
-    @Override
-    public Object visitField(StructParserParser.FieldContext ctx) {
-        // 嵌套定义
-        if (ctx.structDeclaration() != null) return visit(ctx.structDeclaration());
-        if (ctx.unionDeclaration() != null) return visit(ctx.unionDeclaration());
+    /**
+     * 解析 struct 的字段列表
+     * @param baseOffset 基础偏移量（相对于最外层结构体）
+     */
+    private List<Field> parseFields(StructParserParser.FieldListContext ctx, int baseOffset) {
+        if (ctx == null) return List.of();
         
-        // 安全检查：确保有子节点
-        if (ctx.getChildCount() == 0) {
-            addError(ctx, "Invalid field definition");
-            return null;
-        }
+        List<Field> fields = new ArrayList<>();
+        int currentOffset = baseOffset;
         
-        String first = ctx.getChild(0).getText();
-        
-        // 匿名结构体: struct { ... } name; 或 struct { ... }; (无名称)
-        if (first.equals("struct") && ctx.fieldList() != null) {
-            var fields = parseFields(ctx.fieldList());
-            var struct = new Struct(null, fields, true);
+        for (var fieldCtx : ctx.field()) {
+            List<Field> parsedFields = parseField(fieldCtx, currentOffset);
             
-            // 检查是否有字段名
-            boolean hasFieldName = ctx.fieldName() != null;
-            String fieldName = hasFieldName ? ctx.fieldName().getText() : null;
-            
-            if (!hasFieldName) {
-                // 真正的匿名 struct（无字段名）：将字段直接展开到父级
-                for (Field f : fields) {
-                    addField(f.name(), f.type(), f.bitWidth());
-                }
-            } else {
-                // 命名 struct：作为嵌套字段
-                addNestedField(fieldName, Type.STRUCT, struct.totalBits(), struct, null);
+            if (parsedFields.isEmpty()) {
+                continue;
             }
-            return null;
-        }
-        
-        // 匿名联合体: union { ... } name; 或 union { ... }; (无名称)
-        if (first.equals("union") && ctx.fieldList() != null) {
-            var fields = parseUnionFields(ctx.fieldList());
-            var union = new Union(null, fields, true);
             
-            // 检查是否有字段名
-            boolean hasFieldName = ctx.fieldName() != null;
-            String fieldName = hasFieldName ? ctx.fieldName().getText() : null;
+            // 添加到结果中
+            fields.addAll(parsedFields);
             
-            if (!hasFieldName) {
-                // 真正的匿名 union（无字段名）：将字段直接展开到父级，所有字段共享相同偏移量
-                int maxBits = fields.stream().mapToInt(Field::bitWidth).max().orElse(0);
-                int currentUnionId = anonymousUnionCounter++;
-                for (Field f : fields) {
-                    // 添加字段，但标记为匿名 union 的成员
-                    addFieldFromAnonymousUnionWithId(f.name(), f.type(), f.bitWidth(), maxBits, currentUnionId);
-                }
+            // 计算偏移量增加
+            if (parsedFields.size() == 1) {
+                // 单个字段：正常增加
+                currentOffset += parsedFields.get(0).bitWidth();
             } else {
-                // 命名 union：作为嵌套字段
-                addNestedField(fieldName, Type.UNION, union.totalBits(), null, union);
+                // 多个字段：检查是否是匿名 union（所有字段 offset 相同）
+                boolean isAnonymousUnion = parsedFields.stream()
+                    .map(Field::bitOffset)
+                    .distinct()
+                    .count() == 1;
+                
+                if (isAnonymousUnion) {
+                    // 匿名 union：增加最大宽度
+                    int maxWidth = parsedFields.stream()
+                        .mapToInt(Field::bitWidth)
+                        .max()
+                        .orElse(0);
+                    currentOffset += maxWidth;
+                } else {
+                    // 匿名 struct：增加所有字段宽度之和
+                    int totalWidth = parsedFields.stream()
+                        .mapToInt(Field::bitWidth)
+                        .sum();
+                    currentOffset += totalWidth;
+                }
             }
-            return null;
         }
         
-        // 引用结构体: struct StructName name;
-        if (first.equals("struct") && ctx.Identifier() != null) {
-            String structName = ctx.Identifier().getText();
+        return fields;
+    }
+    
+    /**
+     * 解析 union 的字段列表
+     * @param baseOffset 基础偏移量（union 的起始位置）
+     */
+    private List<Field> parseUnionFields(StructParserParser.FieldListContext ctx, int baseOffset) {
+        if (ctx == null) return List.of();
+        
+        List<Field> fields = new ArrayList<>();
+        int maxBits = 0;
+        
+        // Union 内所有字段共享相同的 offset
+        for (var fieldCtx : ctx.field()) {
+            List<Field> parsedFields = parseField(fieldCtx, baseOffset);
+            for (Field f : parsedFields) {
+                fields.add(f);
+                maxBits = Math.max(maxBits, f.bitWidth());
+            }
+        }
+        
+        return fields;
+    }
+    
+    /**
+     * 解析单个字段，返回字段列表（匿名展开时可能返回多个）
+     */
+    private List<Field> parseField(StructParserParser.FieldContext ctx, int offset) {
+        List<Field> result = new ArrayList<>();
+        
+        // 情况1: 匿名 struct { ... } name?;
+        if (isKeyword(ctx, 0, "struct") && ctx.fieldList() != null) {
+            String fieldName = ctx.fieldName() != null ? ctx.fieldName().getText() : null;
+            List<Field> nestedFields = parseFields(ctx.fieldList(), offset);
+            
+            if (fieldName == null || fieldName.isEmpty()) {
+                // 匿名无名称：展开字段到父级
+                return nestedFields;
+            } else {
+                // 有名称：作为嵌套字段
+                Struct nestedStruct = new Struct(null, nestedFields, true);
+                result.add(Field.withNestedStruct(fieldName, nestedStruct.totalBits(), offset, nestedStruct));
+                return result;
+            }
+        }
+        
+        // 情况2: 匿名 union { ... } name?;
+        if (isKeyword(ctx, 0, "union") && ctx.fieldList() != null) {
+            String fieldName = ctx.fieldName() != null ? ctx.fieldName().getText() : null;
+            List<Field> nestedFields = parseUnionFields(ctx.fieldList(), offset);
+            
+            if (fieldName == null || fieldName.isEmpty()) {
+                // 匿名无名称：展开字段到父级
+                return nestedFields;
+            } else {
+                // 有名称：作为嵌套字段
+                Union nestedUnion = new Union(null, nestedFields, true);
+                result.add(Field.withNestedUnion(fieldName, nestedUnion.totalBits(), offset, nestedUnion));
+                return result;
+            }
+        }
+        
+        // 情况3: struct/union Name name; (标准 C 语法)
+        if (isKeyword(ctx, 0, "struct") && ctx.Identifier() != null && ctx.fieldName() != null) {
+            String typeName = ctx.Identifier().getText();
+            String fieldName = ctx.fieldName().getText();
+            Field field = resolveStructReference(typeName, fieldName, offset, ctx);
+            if (field != null) result.add(field);
+            return result;
+        }
+        
+        if (isKeyword(ctx, 0, "union") && ctx.Identifier() != null && ctx.fieldName() != null) {
+            String typeName = ctx.Identifier().getText();
+            String fieldName = ctx.fieldName().getText();
+            Field field = resolveUnionReference(typeName, fieldName, offset, ctx);
+            if (field != null) result.add(field);
+            return result;
+        }
+        
+        // 情况4: TypeName name; (DSL 语法，直接引用)
+        if (ctx.Identifier() != null && ctx.fieldName() != null) {
+            // 检查是否有多个 Identifier（struct/union Name name 的情况）
+            int identifierCount = 0;
+            String typeName = null;
+            for (int i = 0; i < ctx.getChildCount(); i++) {
+                if (ctx.getChild(i) instanceof org.antlr.v4.runtime.tree.TerminalNode) {
+                    var token = (org.antlr.v4.runtime.tree.TerminalNode) ctx.getChild(i);
+                    if (token.getSymbol().getType() == StructParserLexer.Identifier) {
+                        identifierCount++;
+                        if (identifierCount == 1) {
+                            typeName = token.getText();
+                        }
+                    }
+                }
+            }
+            
+            if (identifierCount == 1 && typeName != null) {
+                String fieldName = ctx.fieldName().getText();
+                Field field = resolveTypeReference(typeName, fieldName, offset, ctx);
+                if (field != null) result.add(field);
+                return result;
+            }
+        }
+        
+        // 情况5: 基础类型字段 uintN name;
+        if (ctx.typeSpecifier() != null && ctx.fieldName() != null) {
             String fieldName = ctx.fieldName().getText();
             
-            var ref = result.getStructByName(structName);
-            if (ref != null) {
-                // 检查交叉引用：如果该结构体正在解析中
-                if (currentlyParsing.contains(structName)) {
-                    addError(ctx, "Circular reference detected: " + structName);
-                    addField(fieldName, Type.STRUCT, 0);
-                    return null;
-                }
-                // 保留嵌套的 struct 信息
-                addNestedField(fieldName, Type.STRUCT, ref.totalBits(), ref, null);
-            } else {
-                addError(ctx, "Undefined struct: " + structName);
-                addField(fieldName, Type.STRUCT, 0);
-            }
-            return null;
-        }
-        
-        // 引用联合体: union UnionName name;
-        if (first.equals("union") && ctx.Identifier() != null) {
-            String unionName = ctx.Identifier().getText();
-            String fieldName = ctx.fieldName().getText();
-            
-            var ref = result.getUnionByName(unionName);
-            if (ref != null) {
-                // 检查交叉引用：如果该联合体正在解析中
-                if (currentlyParsing.contains(unionName)) {
-                    addError(ctx, "Circular reference detected: " + unionName);
-                    addField(fieldName, Type.UNION, 0);
-                    return null;
-                }
-                // 保留嵌套的 union 信息
-                addNestedField(fieldName, Type.UNION, ref.totalBits(), null, ref);
-            } else {
-                addError(ctx, "Undefined union: " + unionName);
-                addField(fieldName, Type.UNION, 0);
-            }
-            return null;
-        }
-        
-        // DSL语法：直接使用类型名称引用结构体/联合体 (例如: A ref_a;)
-        // 注意：需要检查 typeSpecifier 是否是 Identifier（而不是 uintN）
-        if (!first.equals("struct") && !first.equals("union") && ctx.typeSpecifier() != null) {
-            // 检查 typeSpecifier 是否是 Identifier 类型
+            // 检查 typeSpecifier 是否是 Identifier（如 uint33）
             if (ctx.typeSpecifier().Identifier() != null) {
                 String typeName = ctx.typeSpecifier().Identifier().getText();
-                String fieldName = ctx.fieldName().getText();
                 
-                // 检查交叉引用：如果该类型已声明且正在解析中
-                if (declaredNames.contains(typeName) && currentlyParsing.contains(typeName)) {
-                    addError(ctx, "Circular reference detected: " + typeName);
-                    addField(fieldName, Type.CUSTOM, 0);
-                    return null;
+                // 检查是否匹配 uintN 格式
+                if (typeName.matches("^uint(\\d+)$")) {
+                    int width = Integer.parseInt(typeName.substring(4));
+                    if (width < 1 || width > 32) {
+                        addError(ctx, "Invalid uint width: " + width + " (must be 1-32)");
+                        result.add(new Field(fieldName, Type.CUSTOM, 0, offset, null, null));
+                        return result;
+                    }
+                    Type type = Type.fromBitWidth(width);
+                    result.add(new Field(fieldName, type, width, offset, null, null));
+                    return result;
                 }
                 
-                // 先尝试查找结构体
-                var structRef = result.getStructByName(typeName);
-                if (structRef != null) {
-                    addNestedField(fieldName, Type.STRUCT, structRef.totalBits(), structRef, null);
-                    return null;
+                // 尝试查找 struct/union 引用
+                Field field = resolveTypeReference(typeName, fieldName, offset, ctx);
+                if (field != null) {
+                    result.add(field);
+                    return result;
                 }
                 
-                // 再尝试查找联合体
-                var unionRef = result.getUnionByName(typeName);
-                if (unionRef != null) {
-                    addNestedField(fieldName, Type.UNION, unionRef.totalBits(), null, unionRef);
-                    return null;
-                }
-                
-                // 如果类型已声明但未找到，说明是前向引用（不允许）
-                if (declaredNames.contains(typeName)) {
-                    addError(ctx, "Forward reference not allowed: " + typeName);
-                    addField(fieldName, Type.CUSTOM, 0);
-                    return null;
-                }
-                
-                // 如果都找不到，作为普通字段处理（可能是 typedef 或未知类型）
-                // 继续执行下面的普通字段处理逻辑
+                // 未知类型
+                result.add(new Field(fieldName, Type.CUSTOM, 0, offset, null, null));
+                return result;
+            }
+            
+            // uint N 格式（两个 token）
+            Type type = parseType(ctx.typeSpecifier());
+            int width = (type != null && type.isPrimitive()) ? type.getBitWidth() : 0;
+            result.add(new Field(fieldName, type != null ? type : Type.CUSTOM, width, offset, null, null));
+            return result;
+        }
+        
+        return result;
+    }
+    
+    /**
+     * 解析类型引用（struct 或 union）
+     */
+    private Field resolveTypeReference(String typeName, String fieldName, int offset, StructParserParser.FieldContext ctx) {
+        // 检查循环引用
+        if (currentlyParsing.contains(typeName)) {
+            addError(ctx, "Circular reference detected: " + typeName);
+            return null;
+        }
+        
+        // 先查找 struct
+        var structRef = result.getStructByName(typeName);
+        if (structRef != null) {
+            // 创建新的 struct，字段 offset 相对于当前 offset
+            Struct expandedStruct = createExpandedStruct(structRef, offset);
+            return Field.withNestedStruct(fieldName, structRef.totalBits(), offset, expandedStruct);
+        }
+        
+        // 再查找 union
+        var unionRef = result.getUnionByName(typeName);
+        if (unionRef != null) {
+            // 创建新的 union，字段 offset 相对于当前 offset
+            Union expandedUnion = createExpandedUnion(unionRef, offset);
+            return Field.withNestedUnion(fieldName, unionRef.totalBits(), offset, expandedUnion);
+        }
+        
+        // 未找到，检查是否是前向引用
+        if (declaredNames.contains(typeName)) {
+            addError(ctx, "Forward reference not allowed: " + typeName);
+        }
+        
+        return null;
+    }
+    
+    private Field resolveStructReference(String structName, String fieldName, int offset, StructParserParser.FieldContext ctx) {
+        if (currentlyParsing.contains(structName)) {
+            addError(ctx, "Circular reference detected: " + structName);
+            return null;
+        }
+        
+        var structRef = result.getStructByName(structName);
+        if (structRef != null) {
+            Struct expandedStruct = createExpandedStruct(structRef, offset);
+            return Field.withNestedStruct(fieldName, structRef.totalBits(), offset, expandedStruct);
+        }
+        
+        addError(ctx, "Undefined struct: " + structName);
+        return null;
+    }
+    
+    private Field resolveUnionReference(String unionName, String fieldName, int offset, StructParserParser.FieldContext ctx) {
+        if (currentlyParsing.contains(unionName)) {
+            addError(ctx, "Circular reference detected: " + unionName);
+            return null;
+        }
+        
+        var unionRef = result.getUnionByName(unionName);
+        if (unionRef != null) {
+            Union expandedUnion = createExpandedUnion(unionRef, offset);
+            return Field.withNestedUnion(fieldName, unionRef.totalBits(), offset, expandedUnion);
+        }
+        
+        addError(ctx, "Undefined union: " + unionName);
+        return null;
+    }
+    
+    /**
+     * 创建展开的 struct，字段 offset 基于 baseOffset 重新计算
+     */
+    private Struct createExpandedStruct(Struct struct, int baseOffset) {
+        List<Field> newFields = new ArrayList<>();
+        int currentOffset = baseOffset;
+        
+        for (Field field : struct.fields()) {
+            if (field.nestedStruct() != null) {
+                // 嵌套 struct，递归创建
+                Struct nestedExpanded = createExpandedStruct(field.nestedStruct(), currentOffset);
+                newFields.add(Field.withNestedStruct(field.name(), field.bitWidth(), currentOffset, nestedExpanded));
+            } else if (field.nestedUnion() != null) {
+                // 嵌套 union，递归创建
+                Union nestedExpanded = createExpandedUnion(field.nestedUnion(), currentOffset);
+                newFields.add(Field.withNestedUnion(field.name(), field.bitWidth(), currentOffset, nestedExpanded));
+            } else {
+                // 普通字段，创建新字段并设置绝对 offset
+                newFields.add(new Field(field.name(), field.type(), field.bitWidth(), currentOffset, null, null));
+            }
+            currentOffset += field.bitWidth();
+        }
+        
+        return new Struct(struct.name(), newFields, struct.anonymous());
+    }
+    
+    /**
+     * 创建展开的 union，字段 offset 都等于 baseOffset
+     */
+    private Union createExpandedUnion(Union union, int baseOffset) {
+        List<Field> newFields = new ArrayList<>();
+        
+        for (Field field : union.fields()) {
+            if (field.nestedStruct() != null) {
+                Struct nestedExpanded = createExpandedStruct(field.nestedStruct(), baseOffset);
+                newFields.add(Field.withNestedStruct(field.name(), field.bitWidth(), baseOffset, nestedExpanded));
+            } else if (field.nestedUnion() != null) {
+                Union nestedExpanded = createExpandedUnion(field.nestedUnion(), baseOffset);
+                newFields.add(Field.withNestedUnion(field.name(), field.bitWidth(), baseOffset, nestedExpanded));
+            } else {
+                newFields.add(new Field(field.name(), field.type(), field.bitWidth(), baseOffset, null, null));
             }
         }
         
-        // 普通字段
-        if (ctx.typeSpecifier() != null) {
-            var type = parseType(ctx.typeSpecifier());
-            String name = ctx.fieldName().getText();
-            int width = type != null && type.isPrimitive() ? type.getBitWidth() : 0;
-            addField(name, type != null ? type : Type.CUSTOM, width);
-        }
-        return null;
+        return new Union(union.name(), newFields, union.anonymous());
+    }
+    
+    /**
+     * 检查 field 的第 index 个子节点是否是指定关键字
+     */
+    private boolean isKeyword(StructParserParser.FieldContext ctx, int index, String keyword) {
+        if (ctx.getChildCount() <= index) return false;
+        String text = ctx.getChild(index).getText();
+        return text.equals(keyword);
+    }
+    
+    /**
+     * 检查是否是顶层声明（不在任何 struct/union 内部）
+     */
+    private boolean isTopLevel(ParserRuleContext ctx) {
+        return ctx.getParent() instanceof StructParserParser.DeclarationContext;
     }
     
     @Override
@@ -289,268 +471,41 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
         return null;
     }
     
-    // ============ Helper Methods ============
-    
     /**
-     * 字段组，用于表示来自同一个匿名 union 的字段
+     * 解析类型说明符
      */
-    private record FieldGroup(List<Field> fields, int unionWidth, boolean isAnonymousUnion) {
-        static FieldGroup single(Field field) {
-            return new FieldGroup(List.of(field), field.bitWidth(), false);
-        }
-        
-        static FieldGroup anonymousUnion(List<Field> fields, int unionWidth) {
-            return new FieldGroup(fields, unionWidth, true);
-        }
-    }
-    
-    // 用于跟踪当前正在收集的匿名 union 字段
-    private int anonymousUnionCounter = 0;
-    
-    private List<Field> parseFields(StructParserParser.FieldListContext ctx) {
-        if (ctx == null) return List.of();
-        
-        stack.push(new Context(new ArrayList<>()));
-        ctx.field().forEach(this::visit);
-        var context = stack.pop();
-        
-        // 将字段分组（识别匿名 union 字段组）
-        List<FieldGroup> groups = groupFields(context.fields);
-        
-        // 计算偏移量
-        var result = new ArrayList<Field>();
-        int offset = 0;
-        for (FieldGroup group : groups) {
-            if (group.isAnonymousUnion()) {
-                // 匿名 union：所有字段共享相同的 offset
-                for (Field f : group.fields()) {
-                    Field updatedField = setFieldOffset(f, offset);
-                    result.add(updatedField);
-                }
-                offset += group.unionWidth();
-            } else {
-                // 普通字段或命名嵌套结构
-                for (Field f : group.fields()) {
-                    Field updatedField = setFieldOffset(f, offset);
-                    result.add(updatedField);
-                    offset += f.bitWidth();
-                }
-            }
-        }
-        return result;
-    }
-    
-    /**
-     * 将字段列表分组，识别来自同一个匿名 union 的字段
-     */
-    private List<FieldGroup> groupFields(List<Field> fields) {
-        List<FieldGroup> groups = new ArrayList<>();
-        int i = 0;
-        
-        while (i < fields.size()) {
-            Field current = fields.get(i);
-            
-            // 检查是否是匿名 union 字段的标记
-            String unionId = getAnonymousUnionId(current);
-            if (unionId != null) {
-                // 收集所有属于这个匿名 union 的字段
-                List<Field> unionFields = new ArrayList<>();
-                int maxBits = 0;
-                
-                while (i < fields.size()) {
-                    Field f = fields.get(i);
-                    String fid = getAnonymousUnionId(f);
-                    // 如果字段不属于同一个 union，停止收集
-                    if (fid == null || !fid.equals(unionId)) {
-                        break;
-                    }
-                    // 清理字段名称，去除标记前缀
-                    String cleanName = stripAnonymousUnionPrefix(f.name());
-                    Field cleanField = new Field(cleanName, f.type(), f.bitWidth(), f.bitOffset(), f.nestedStruct(), f.nestedUnion());
-                    unionFields.add(cleanField);
-                    maxBits = Math.max(maxBits, f.bitWidth());
-                    i++;
-                }
-                
-                groups.add(FieldGroup.anonymousUnion(unionFields, maxBits));
-            } else {
-                groups.add(FieldGroup.single(current));
-                i++;
-            }
-        }
-        
-        return groups;
-    }
-    
-    /**
-     * 获取字段的匿名 union ID，如果不是匿名 union 成员则返回 null
-     */
-    private String getAnonymousUnionId(Field field) {
-        if (field.name() == null) {
-            return null;
-        }
-        String name = field.name();
-        if (name.startsWith("__anon_union_") && name.contains("__member__")) {
-            int start = "__anon_union_".length();
-            int end = name.indexOf("__member__");
-            return name.substring(start, end);
-        }
-        return null;
-    }
-    
-    /**
-     * 去除匿名 union 成员的特殊前缀
-     */
-    private String stripAnonymousUnionPrefix(String name) {
-        if (name == null) {
-            return "";
-        }
-        // 处理格式: __anon_union_<id>__member__<actual_name>
-        if (name.contains("__member__")) {
-            int idx = name.indexOf("__member__");
-            return name.substring(idx + "__member__".length());
-        }
-        return name;
-    }
-    
-    /**
-     * 检查字段是否是匿名 union 的标记
-     */
-    private boolean isAnonymousUnionMarker(Field field) {
-        return field.name() != null && field.name().startsWith("__anon_union__");
-    }
-    
-    /**
-     * 检查字段是否是匿名 union 的成员
-     */
-    private boolean isAnonymousUnionMember(Field field) {
-        return field.name() != null && field.name().startsWith("__anon_union_member__");
-    }
-    
-    private List<Field> parseUnionFields(StructParserParser.FieldListContext ctx) {
-        if (ctx == null) return List.of();
-        
-        stack.push(new Context(new ArrayList<>()));
-        ctx.field().forEach(this::visit);
-        var context = stack.pop();
-        
-        // Union 内的字段在创建时 offset 为 0，后续会在父级结构中更新
-        // 注意：匿名 union/struct 的字段已经被展开，所以这里只处理真正的 union 字段
-        return context.fields.stream()
-            .map(f -> new Field(f.name(), f.type(), f.bitWidth(), 0, f.nestedStruct(), f.nestedUnion()))
-            .toList();
-    }
-    
-    private void addField(String name, Type type, int width) {
-        if (!stack.isEmpty()) {
-            stack.peek().fields.add(Field.of(name, type, width));
-        }
-    }
-    
-    /**
-     * 添加来自匿名 union 的字段
-     * @param name 字段名
-     * @param type 字段类型
-     * @param width 字段位宽
-     * @param unionWidth 匿名 union 的总宽度（最大字段宽度）
-     */
-    private void addFieldFromAnonymousUnion(String name, Type type, int width, int unionWidth) {
-        if (!stack.isEmpty()) {
-            Context ctx = stack.peek();
-            // 使用特殊前缀标记这是匿名 union 的成员，包含 union ID
-            String markerName = "__anon_union_" + anonymousUnionCounter + "__member__" + name;
-            Field field = new Field(markerName, type, width, 0, null, null);
-            ctx.fields.add(field);
-        }
-    }
-    
-    /**
-     * 添加来自匿名 union 的字段（带指定 ID）
-     */
-    private void addFieldFromAnonymousUnionWithId(String name, Type type, int width, int unionWidth, int unionId) {
-        if (!stack.isEmpty()) {
-            Context ctx = stack.peek();
-            String markerName = "__anon_union_" + unionId + "__member__" + name;
-            Field field = new Field(markerName, type, width, 0, null, null);
-            ctx.fields.add(field);
-        }
-    }
-    
-    private void addNestedField(String name, Type type, int width, Struct nestedStruct, Union nestedUnion) {
-        if (!stack.isEmpty()) {
-            if (nestedStruct != null) {
-                stack.peek().fields.add(Field.withNestedStruct(name, width, 0, nestedStruct));
-            } else if (nestedUnion != null) {
-                stack.peek().fields.add(Field.withNestedUnion(name, width, 0, nestedUnion));
-            } else {
-                stack.peek().fields.add(Field.of(name, type, width));
-            }
-        }
-    }
-    
-    /**
-     * 为字段设置绝对偏移量，并递归更新嵌套结构的偏移量
-     */
-    private Field setFieldOffset(Field field, int offset) {
-        if (field.nestedStruct() != null) {
-            // 递归更新嵌套 struct 内部所有字段的偏移量
-            Struct updatedStruct = updateStructOffsets(field.nestedStruct(), offset);
-            return new Field(field.name(), field.type(), field.bitWidth(), offset, updatedStruct, null);
-        } else if (field.nestedUnion() != null) {
-            // 递归更新嵌套 union 内部所有字段的偏移量
-            Union updatedUnion = updateUnionOffsets(field.nestedUnion(), offset);
-            return new Field(field.name(), field.type(), field.bitWidth(), offset, null, updatedUnion);
-        } else {
-            // 普通字段
-            return new Field(field.name(), field.type(), field.bitWidth(), offset, null, null);
-        }
-    }
-    
-    /**
-     * 递归更新 struct 内部所有字段的绝对偏移量
-     */
-    private Struct updateStructOffsets(Struct struct, int baseOffset) {
-        List<Field> updatedFields = new ArrayList<>();
-        int currentOffset = baseOffset;
-        for (Field field : struct.fields()) {
-            Field updatedField = setFieldOffset(field, currentOffset);
-            updatedFields.add(updatedField);
-            currentOffset += field.bitWidth();
-        }
-        return new Struct(struct.name(), updatedFields, struct.anonymous());
-    }
-    
-    /**
-     * 递归更新 union 内部所有字段的绝对偏移量（union 内所有字段共享相同的基偏移量）
-     */
-    private Union updateUnionOffsets(Union union, int baseOffset) {
-        List<Field> updatedFields = union.fields().stream()
-            .map(field -> setFieldOffset(field, baseOffset))
-            .toList();
-        return new Union(union.name(), updatedFields, union.anonymous());
-    }
-    
     private Type parseType(StructParserParser.TypeSpecifierContext ctx) {
-        if (ctx.Identifier() != null) {
-            String name = ctx.Identifier().getText();
-            if (typedefs.containsKey(name)) return Type.CUSTOM;
-            try {
-                return Type.fromString(name);
-            } catch (IllegalArgumentException e) {
-                addError(ctx, "Unknown type: " + name);
-                return null;
-            }
-        }
         if (ctx.IntegerLiteral() != null) {
             int width = Integer.parseInt(ctx.IntegerLiteral().getText());
+            // 验证宽度范围：1-32
+            if (width < 1 || width > 32) {
+                addError(ctx, "Invalid uint width: " + width + " (must be 1-32)");
+                return Type.CUSTOM;
+            }
             try {
                 return Type.fromBitWidth(width);
             } catch (IllegalArgumentException e) {
                 addError(ctx, "Invalid width: " + width);
-                return null;
+                return Type.CUSTOM;
             }
         }
-        return null;
+        
+        if (ctx.Identifier() != null) {
+            String name = ctx.Identifier().getText();
+            // 检查是否是 typedef
+            if (typedefs.containsKey(name)) {
+                return Type.CUSTOM;
+            }
+            // 尝试解析为 uintN
+            try {
+                return Type.fromString(name);
+            } catch (IllegalArgumentException e) {
+                // 不是基础类型，可能是 struct/union 引用
+                return Type.CUSTOM;
+            }
+        }
+        
+        return Type.CUSTOM;
     }
     
     private void addError(ParserRuleContext ctx, String msg) {
@@ -558,6 +513,4 @@ public class StructParseVisitor extends StructParserBaseVisitor<Object> {
         int col = ctx.getStart().getCharPositionInLine();
         errors.add(String.format("Line %d:%d - %s", line, col, msg));
     }
-    
-    private record Context(List<Field> fields) {}
 }
